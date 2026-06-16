@@ -34,6 +34,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # vulkan-shaders-gen forks a compiler per shader and is memory-heavy;
+      # the default hosted-runner memory left it failing to fork on a fresh
+      # (cache-miss) build. Add swap headroom so the build is reliable, not
+      # luck-of-the-runner. The build's processes run in the host cgroup and
+      # use this swap.
+      - name: Add swap headroom
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
