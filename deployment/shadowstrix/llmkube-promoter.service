@@ -8,7 +8,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=%h/.config/llmkube-promoter/env
-ExecStart=%h/.local/bin/promoter run-once --render-gid ${RENDER_GID}
+ExecStart=%h/.local/bin/promoter run-once --render-gid ${RENDER_GID} --min-decode-toks ${MIN_DECODE_TOKS}
 Nice=10
 # Keep go-containerregistry + cosign + kubectl auth scoped to this unit's env.
 
