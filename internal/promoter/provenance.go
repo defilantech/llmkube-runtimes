@@ -34,7 +34,10 @@ func (v *Verifier) Verify(ctx context.Context, digest string) error {
 	}
 	ref := v.Repo + "@" + digest
 	return run(ctx, "cosign", "verify-attestation",
-		"--type", "slsaprovenance",
+		// Full predicate URI: actions/attest-build-provenance emits SLSA
+		// provenance v1; cosign's "slsaprovenance" shorthand is v0.2 and does
+		// not match (confirmed against a real candidate's attestation).
+		"--type", "https://slsa.dev/provenance/v1",
 		"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
 		"--certificate-identity-regexp", fmt.Sprintf("^https://github.com/%s/", v.AttestRepo),
 		ref,
