@@ -29,7 +29,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: ["ALL"] }
           resources:
-            limits: { amd.com/gpu: 1, memory: 8Gi }
+            limits: { devic.es/dri-render: 1, memory: 8Gi }
           volumeMounts:
             - { name: smoke, mountPath: /smoke, readOnly: true }
             - { name: models, mountPath: /models, readOnly: true }
