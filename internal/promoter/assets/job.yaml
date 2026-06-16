@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: vk-smoke-
+  namespace: llmkube-promoter
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector: { accelerator: amd }
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        supplementalGroups: [__RENDER_GID__]
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: smoke
+          image: __IMAGE__
+          command: ["/bin/bash", "/smoke/smoke.sh"]
+          env:
+            - { name: MIN_DECODE_TOKS, value: "__FLOOR__" }
+            # writable cache dir on the emptyDir /tmp so ggml-vulkan can cache
+            # compiled shaders despite readOnlyRootFilesystem (else: cold compile + a warning every run)
+            - { name: HOME, value: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            limits: { devic.es/dri-render: 1, memory: 8Gi }
+          volumeMounts:
+            - { name: smoke, mountPath: /smoke, readOnly: true }
+            - { name: models, mountPath: /models, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: smoke
+          configMap: { name: vk-smoke-script, defaultMode: 0555 }
+        - name: models
+          hostPath: { path: /var/lib/llmkube-promoter/models, type: Directory }
+        - name: tmp
+          emptyDir: {}
