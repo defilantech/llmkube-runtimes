@@ -24,6 +24,9 @@ spec:
           command: ["/bin/bash", "/smoke/smoke.sh"]
           env:
             - { name: MIN_DECODE_TOKS, value: "__FLOOR__" }
+            # writable cache dir on the emptyDir /tmp so ggml-vulkan can cache
+            # compiled shaders despite readOnlyRootFilesystem (else: cold compile + a warning every run)
+            - { name: HOME, value: /tmp }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

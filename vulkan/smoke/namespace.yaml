@@ -2,4 +2,9 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: llmkube-promoter
-  labels: { pod-security.kubernetes.io/enforce: restricted }
+  # The smoke pod mounts the pre-staged model from a node hostPath (the smoke
+  # runs offline, so the model can't be pulled), and hostPath is a
+  # privileged-tier volume under PodSecurity. The pod is still hardened by its
+  # own securityContext (non-root, read-only rootfs, all caps dropped,
+  # no service-account token) and a deny-egress NetworkPolicy.
+  labels: { pod-security.kubernetes.io/enforce: privileged }
