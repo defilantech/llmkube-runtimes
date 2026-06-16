@@ -18,7 +18,7 @@ func TestVerifyProvenance(t *testing.T) {
 		t.Fatalf("verify: %v", err)
 	}
 	joined := strings.Join(gotArgs, " ")
-	for _, want := range []string{"--type", "slsaprovenance", "defilantech/llmkube-runtimes", "sha256:abc"} {
+	for _, want := range []string{"--type", "https://slsa.dev/provenance/v1", "defilantech/llmkube-runtimes", "sha256:abc"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args %q missing %q", joined, want)
 		}
