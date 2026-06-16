@@ -1,0 +1,41 @@
+# Least-privilege identity for the out-of-band promoter to drive smoke Jobs.
+# The promoter runs off-cluster (systemd on the GPU host) and authenticates as
+# this ServiceAccount via a token in its kubeconfig. It can only manage Jobs +
+# read their pods/logs + manage the smoke-script ConfigMap, all confined to the
+# llmkube-promoter namespace. No secrets, no cluster-wide rights.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: llmkube-promoter
+  namespace: llmkube-promoter
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: llmkube-promoter
+  namespace: llmkube-promoter
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: llmkube-promoter
+  namespace: llmkube-promoter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: llmkube-promoter
+subjects:
+  - kind: ServiceAccount
+    name: llmkube-promoter
+    namespace: llmkube-promoter

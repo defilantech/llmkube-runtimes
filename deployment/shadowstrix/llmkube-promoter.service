@@ -1,0 +1,16 @@
+# systemd --user oneshot that runs the promoter once. Paired with the .timer.
+# Install under ~/.config/systemd/user/ on the GPU host and enable the timer.
+[Unit]
+Description=LLMKube image promoter (run once)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/llmkube-promoter/env
+ExecStart=%h/.local/bin/promoter run-once --render-gid ${RENDER_GID}
+Nice=10
+# Keep go-containerregistry + cosign + kubectl auth scoped to this unit's env.
+
+[Install]
+WantedBy=default.target
