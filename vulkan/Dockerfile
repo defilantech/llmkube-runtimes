@@ -32,13 +32,16 @@ RUN git clone --depth 1 --branch "${LLAMACPP_REF}" https://github.com/ggml-org/l
     && if [ "${got}" != "${LLAMACPP_SHA}" ]; then \
          echo "ERROR: ${LLAMACPP_REF} resolved to ${got}, expected ${LLAMACPP_SHA}"; exit 1; \
        fi
-# Mirror upstream's proven Vulkan recipe: dynamic backend loading + all CPU
-# variants so the same image runs on any x86-64, with the Vulkan backend as a
-# dlopen-able libggml-vulkan.so. LLAMA_CURL=OFF: models are staged locally by
-# the LLMKube Model download Job, and the smoke gate runs fully offline.
+# Dynamic backend loading, Vulkan as a dlopen-able libggml-vulkan.so, and a
+# single generic-x86-64 CPU backend (GGML_NATIVE=OFF). We intentionally do NOT
+# set GGML_CPU_ALL_VARIANTS: this is a GPU image (the Vulkan backend does the
+# work), and the ~15 extra per-microarch CPU variants only add build time,
+# image size, and peak memory, the last of which exhausted the CI runner and
+# made vulkan-shaders-gen fail to fork. LLAMA_CURL=OFF: models are staged
+# locally by the LLMKube Model download Job, and the smoke gate runs offline.
 RUN cmake -B build \
       -DGGML_NATIVE=OFF -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON \
-      -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF \
+      -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF \
     && cmake --build build --config Release -j"$(nproc)" \
     && mkdir -p /out \
     && find build -name '*.so*' -exec cp -P {} /out/ \; \
