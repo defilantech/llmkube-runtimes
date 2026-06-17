@@ -30,3 +30,15 @@ if echo "${out}" | grep -qiE 'symbol lookup error|failed to load|undefined symbo
   exit 1
 fi
 echo "PASS: server launches and backends load without error"
+
+# The tools image bundles llama-bench alongside the same backends. Confirm it is
+# present and launches (links its backends) too. No-op for the server image,
+# which ships no llama-bench.
+if docker run --rm --entrypoint test "${IMAGE}" -f /app/llama-bench 2>/dev/null; then
+  echo "== llama-bench --help (tools image) =="
+  if ! docker run --rm --entrypoint /app/llama-bench "${IMAGE}" --help >/dev/null 2>&1; then
+    echo "FAIL: llama-bench is present but failed to launch"
+    exit 1
+  fi
+  echo "PASS: llama-bench launches and links its backends"
+fi
