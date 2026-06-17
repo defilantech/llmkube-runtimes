@@ -43,9 +43,10 @@ RUN cmake -B build \
       -DGGML_NATIVE=OFF -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON \
       -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF \
     && cmake --build build --config Release -j"$(nproc)" \
-    && mkdir -p /out \
+    && mkdir -p /out /out-tools \
     && find build -name '*.so*' -exec cp -P {} /out/ \; \
-    && cp build/bin/llama-server /out/
+    && cp build/bin/llama-server /out/ \
+    && cp build/bin/llama-bench build/bin/llama-cli /out-tools/
 # #725 guard, GPU-independent. The upstream break was an undefined shader symbol
 # in libggml-vulkan.so that bound lazily, so it only crashed at shader-use time
 # on a real GPU. RTLD_NOW forces every relocation to resolve at dlopen, so a
@@ -58,6 +59,39 @@ RUN printf '%s\n' \
       '  printf("dlopen OK: %s\n", argv[1]); return 0; }' > /tmp/dlcheck.c \
     && gcc /tmp/dlcheck.c -o /tmp/dlcheck -ldl \
     && LD_LIBRARY_PATH=/out /tmp/dlcheck /out/libggml-vulkan.so
+
+# Tooling image: the same Vulkan build, plus llama-bench and llama-cli for
+# benchmarking and diagnostics on real hardware. Built from the SAME build stage
+# (identical llama.cpp commit + backends as the server image) so its numbers are
+# directly comparable to what the server runtime does. Kept as a separate image
+# so the production server image stays minimal (server binary only). Placed
+# before the server stage so the server image remains the default build target.
+FROM docker.io/ubuntu:26.04@${BASE_DIGEST} AS tools
+ARG LLAMACPP_REF
+ARG LLAMACPP_SHA
+LABEL org.opencontainers.image.title="llmkube-llama-vulkan-tools" \
+      org.opencontainers.image.description="LLMKube AMD/Vulkan llama.cpp tooling (llama-bench, llama-cli, llama-server) for benchmarking and diagnostics" \
+      org.opencontainers.image.source="https://github.com/defilantech/llmkube-runtimes" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      io.llmkube.llamacpp.ref="${LLAMACPP_REF}" \
+      io.llmkube.llamacpp.sha="${LLAMACPP_SHA}"
+# Same RADV (mesa-vulkan-drivers) + Vulkan loader runtime as the server image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libgomp1 libvulkan1 mesa-vulkan-drivers curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r llama && useradd -r -g llama llama
+# /out = libggml-*.so backends + llama-server; /out-tools = llama-bench + llama-cli.
+# GGML_BACKEND_DL looks beside the executable, so all binaries and the backends
+# share /app.
+COPY --from=build /out/ /app/
+COPY --from=build /out-tools/ /app/
+WORKDIR /app
+ENV LLAMA_ARG_HOST=0.0.0.0
+# Non-root, same as the server image. GPU access needs the deployment to grant
+# the host render group via securityContext.supplementalGroups (the device
+# plugin exposes /dev/dri). One-shot tools: no server port or HEALTHCHECK.
+USER llama
+ENTRYPOINT ["/app/llama-bench"]
 
 FROM docker.io/ubuntu:26.04@${BASE_DIGEST} AS server
 ARG LLAMACPP_REF

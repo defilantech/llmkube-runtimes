@@ -2,7 +2,7 @@
 
 Inference runtime container images for [LLMKube](https://github.com/defilantech/LLMKube), built from source and gated on real hardware.
 
-Today this repo builds one image: the **AMD/Vulkan** llama.cpp server. The layout (`vulkan/`) is set up so other backends (CUDA, Intel, CPU) can be added as sibling directories later without restructuring.
+Today this repo builds the **AMD/Vulkan** llama.cpp runtime as two images from one build: a minimal **server** image (what the operator runs) and a **tools** image (`llama-bench` + `llama-cli`, for hardware benchmarking and diagnostics). The layout (`vulkan/`) is set up so other backends (CUDA, Intel, CPU) can be added as sibling directories later without restructuring.
 
 ## Why this repo exists
 
@@ -12,15 +12,22 @@ Building from source here means we own the Vulkan shader-gen step, the base imag
 
 Design reference: [`docs/proposals/697-amd-vulkan-runtime-image.md`](https://github.com/defilantech/LLMKube/blob/main/docs/proposals/697-amd-vulkan-runtime-image.md) in the LLMKube repo.
 
-## Image
+## Images
 
-`ghcr.io/defilantech/llmkube-llama-vulkan`
+Both images come from the same `vulkan/Dockerfile` build stage, so they carry the identical llama.cpp commit and Vulkan backends.
+
+`ghcr.io/defilantech/llmkube-llama-vulkan` — the server runtime.
 
 - Ubuntu 26.04 base (Mesa new enough for `gfx1151` / Strix Halo RADV), pinned by digest.
-- `cmake -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON`, llama.cpp pinned by tag + commit SHA.
+- `cmake -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON` with `GGML_NATIVE=OFF` (a single generic x86-64 CPU backend, not `GGML_CPU_ALL_VARIANTS`), llama.cpp pinned by tag + commit SHA.
 - Runs the OpenAI-compatible `llama-server`. No ROCm.
 
-The pod consumes the GPU by mounting `/dev/dri` device nodes (both `renderD128` and `card1`) via a generic device-plugin resource; it requests no `nvidia.com/gpu`. Non-root: the deployment grants the host render group via `securityContext.supplementalGroups`.
+`ghcr.io/defilantech/llmkube-llama-vulkan-tools` — benchmarking + diagnostics.
+
+- Same backends and commit as the server image, plus `llama-bench` and `llama-cli` (it also carries `llama-server`). Default entrypoint is `llama-bench`.
+- Run off-cluster to benchmark hardware (e.g. Strix Halo `gfx1151`) with numbers directly comparable to the server runtime. The operator never consumes this image.
+
+Either pod consumes the GPU by mounting `/dev/dri` device nodes (both `renderD128` and `card1`) via a generic device-plugin resource; it requests no `nvidia.com/gpu`. Non-root: the deployment grants the host render group via `securityContext.supplementalGroups`.
 
 ## The two-tier gate
 
@@ -34,19 +41,26 @@ Tier 2 (the promoter) lands in a follow-up; this bootstrap is Tier 1.
 ## Build locally
 
 ```bash
+# server (default final stage)
 docker build -t llmkube-llama-vulkan:dev vulkan/
 ./scripts/tier1-gate.sh llmkube-llama-vulkan:dev
+
+# tools (llama-bench + llama-cli)
+docker build --target tools -t llmkube-llama-vulkan-tools:dev vulkan/
+./scripts/tier1-gate.sh llmkube-llama-vulkan-tools:dev
 ```
 
-Bump the pinned llama.cpp ref by editing `LLAMACPP_REF` + `LLAMACPP_SHA` in `vulkan/Dockerfile` (the SHA check fails the build if they disagree).
+Bump the pinned llama.cpp ref by editing `LLAMACPP_REF` + `LLAMACPP_SHA` in `vulkan/Dockerfile` (the SHA check fails the build if they disagree); both images move together.
 
 ## Tags
+
+Both images use the same tag scheme:
 
 - `:candidate-<gitsha>` — built + Tier-1 passed, not yet GPU-verified. Do not run in production.
 - `:b<upstream-build>-llmkube<N>` — immutable, GPU-smoke-passed.
 - `:stable` — moving, advanced by the promoter.
 
-The operator pins an explicit immutable tag or digest, never `:stable`.
+The operator pins an explicit immutable tag or digest of the server image, never `:stable`. The tools image is run by hand for benchmarking; pin a `:candidate-<gitsha>` for a reproducible benchmark.
 
 ## Contributing
 

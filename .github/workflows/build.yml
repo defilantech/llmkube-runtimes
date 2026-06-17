@@ -28,9 +28,22 @@ jobs:
       packages: write       # push candidate to GHCR (trusted refs only)
       id-token: write        # keyless provenance attestation
       attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Production server runtime (llama-server only; kept minimal).
+          - target: server
+            image: ghcr.io/defilantech/llmkube-llama-vulkan
+          # Benchmarking + diagnostics tooling (llama-bench, llama-cli,
+          # llama-server) from the SAME build stage / llama.cpp commit, so its
+          # numbers are directly comparable to the server runtime. Consumed
+          # off-cluster for hardware benchmarking, never by the operator.
+          - target: tools
+            image: ghcr.io/defilantech/llmkube-llama-vulkan-tools
     env:
-      IMAGE: ghcr.io/defilantech/llmkube-llama-vulkan
-      LOCAL: ghcr.io/defilantech/llmkube-llama-vulkan:ci-${{ github.sha }}
+      IMAGE: ${{ matrix.image }}
+      LOCAL: ${{ matrix.image }}:ci-${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
 
@@ -56,11 +69,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: vulkan
-          target: server
+          target: ${{ matrix.target }}
           load: true
           tags: ${{ env.LOCAL }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=vulkan-${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=vulkan-${{ matrix.target }}
 
       - name: Tier-1 gate (Vulkan backend must load; catches #725-class breaks)
         run: ./scripts/tier1-gate.sh "${{ env.LOCAL }}"
@@ -75,7 +88,7 @@ jobs:
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sbom-${{ github.sha }}
+          name: sbom-${{ matrix.target }}-${{ github.sha }}
           path: sbom.spdx.json
 
       # --- Trusted refs only. Fork PRs build + gate above, but never reach here:
