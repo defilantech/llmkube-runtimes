@@ -21,7 +21,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  # One leg per image (server, tools). GitHub reports these as
+  # "image (server, ...)" / "image (tools, ...)"; the stable required status
+  # check is the `build` gate job below, so branch protection does not depend on
+  # the matrix leg names.
+  image:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -121,3 +125,17 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ env.DIGEST }}
           push-to-registry: true
+
+  # Stable required status check. Branch protection on main gates on "build";
+  # this job reports it and succeeds only if every image matrix leg passed, so
+  # the requirement is independent of the matrix leg names.
+  build:
+    needs: [image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all image builds passed
+        run: |
+          result="${{ needs.image.result }}"
+          echo "image matrix result: ${result}"
+          test "${result}" = "success"
