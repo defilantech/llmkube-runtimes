@@ -67,7 +67,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=build /out/ /app/
 WORKDIR /app
 ENV LLAMA_ARG_HOST=0.0.0.0
+EXPOSE 8080
 # Non-root; GPU via securityContext.supplementalGroups + the /dev/dri device
-# plugin, same as the production image. Default entrypoint is the benchmark tool.
+# plugin. Entrypoint is llama-server so the LLMKube operator (which sets args
+# only, not command, relying on the image entrypoint) can serve from this image
+# via an image override + extraArgs such as --spec-type draft-mtp. The benchmark
+# harness calls /app/llama-bench and /app/llama-perplexity by explicit path, so
+# this entrypoint change does not affect benchmarking.
 USER llama
-ENTRYPOINT ["/app/llama-bench"]
+ENTRYPOINT ["/app/llama-server"]
