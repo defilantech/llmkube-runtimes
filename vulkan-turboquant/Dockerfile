@@ -13,7 +13,10 @@
 # support); the resolved commit is recorded at /app/TURBO_SHA in the image.
 
 ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
-ARG TURBO_REF=c584da092baac098927028097a112cb87ee1b646
+# PR #186 branch tip (investigate/mtp-devicelost): c584da0 device-lost fix
+# (submit more frequently on iGPUs) + 5cc7f0c FA-dispatch diagnostic
+# (GGML_VK_FA_LOG). Built to run Tom's #185 repro and capture the FA logs.
+ARG TURBO_REF=5cc7f0cfcbe75ed2cc6eba327ba7224d523764a3
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
