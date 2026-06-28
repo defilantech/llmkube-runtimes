@@ -82,18 +82,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Multi-arch candidate. amd64 is CI-smoked above; arm64 (Apple Silicon /
-      # arm edge) is build-verified only -- there is no arm CI runner to smoke
-      # it. Reuses the cache from the amd64 build leg. Pushed only on trusted
+      # Multi-arch build. amd64 is CI-smoked above; arm64 (Apple Silicon / arm
+      # edge) cannot be smoked here (no arm CI runner), but it is always *built*
+      # -- including on PRs -- so a broken arm64 cross-build is caught in review,
+      # not after merge. Reuses the amd64 build cache. Pushed only on trusted
       # refs; the digest below is the multi-arch index digest.
-      - name: Build + push multi-arch candidate
-        if: github.event_name != 'pull_request'
+      - name: Build multi-arch (build-only validates arm64 on PRs; push on trusted refs)
         id: push
         uses: docker/build-push-action@v6
         with:
           context: coder
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ env.IMAGE }}:candidate-${{ github.sha }}
           cache-from: type=gha,scope=coder
           provenance: true
