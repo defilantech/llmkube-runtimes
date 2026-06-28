@@ -49,12 +49,25 @@ ARG TARGETOS
 ARG TARGETARCH
 ENV CGO_ENABLED=0
 WORKDIR /build
+# Resolve LLMKUBE_REF to the module's version string so the stamped binary
+# reports a real version instead of "dev". `go list -m` needs a module context,
+# so run it in a throwaway module; for a tag this returns the tag, for a commit
+# the proxy's pseudo-version (e.g. v0.8.20-0.<ts>-<sha>). The foreman-agent
+# binary reads `main.Version`/`main.GitCommit` (same vars goreleaser stamps), and
+# the FleetNode heartbeats main.Version, so an empty stamp shows up as "dev" in
+# `kubectl get fleetnodes`.
+RUN mkdir -p /out /tmp/vresolve \
+    && ( cd /tmp/vresolve && go mod init coderbuild >/dev/null 2>&1 \
+         && go list -m -f '{{.Version}}' "github.com/defilantech/llmkube@${LLMKUBE_REF}" > /out/llmkube.version ) \
+    && LLMKUBE_VERSION="$(cat /out/llmkube.version)" \
+    && echo "foreman-agent version: ${LLMKUBE_VERSION} (ref ${LLMKUBE_REF})"
 # go install with GOOS/GOARCH set lands cross-built binaries under
 # $GOPATH/bin/<os>_<arch>/ and native ones under $GOPATH/bin/, so resolve each by
 # name rather than assuming a path. controller-gen is cross-compiled here too
 # (it has no prebuilt release binary) to keep it off the emulated path.
-RUN mkdir -p /out \
-    && GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go install -trimpath -ldflags="-s -w" \
+RUN LLMKUBE_VERSION="$(cat /out/llmkube.version)" \
+    && GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go install -trimpath \
+         -ldflags="-s -w -X main.Version=${LLMKUBE_VERSION} -X main.GitCommit=${LLMKUBE_REF}" \
          github.com/defilantech/llmkube/cmd/foreman-agent@${LLMKUBE_REF} \
     && GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go install \
          sigs.k8s.io/controller-tools/cmd/controller-gen@${CONTROLLER_TOOLS_VERSION} \

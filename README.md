@@ -57,7 +57,7 @@ docker build -t llmkube-foreman-agent-coder:dev coder/
 ./scripts/coder-smoke.sh llmkube-foreman-agent-coder:dev
 ```
 
-Bump the pinned foreman-agent by editing `LLMKUBE_REF` in `coder/Dockerfile` (a release tag or commit SHA); bump the toolchain pins (`HELM_VERSION`, `GOLANGCI_LINT_VERSION`, `CONTROLLER_TOOLS_VERSION`) in lockstep with the LLMKube Makefile.
+Bump the pinned foreman-agent by editing `LLMKUBE_REF` in `coder/Dockerfile` (a release tag or commit SHA); the build derives the binary's reported version from that ref (the tag, or the module proxy's pseudo-version for a commit) and stamps it via `-ldflags`, so the FleetNode reports a real version rather than `dev`. Bump the toolchain pins (`HELM_VERSION`, `GOLANGCI_LINT_VERSION`, `CONTROLLER_TOOLS_VERSION`) in lockstep with the LLMKube Makefile.
 
 ## Build locally
 

@@ -23,6 +23,9 @@ docker run --rm --entrypoint sh "${IMG}" -ec '
   echo "== controller-gen ==";    controller-gen --version
   echo "== foreman-agent path =="; command -v foreman-agent
   echo "== /foreman-agent ==";    test -x /foreman-agent && echo "/foreman-agent is executable"
+  echo "== foreman-agent version (must be stamped, not dev) =="
+  v="$(/foreman-agent --version 2>&1)"; echo "$v"
+  case "$v" in *" dev"|*"version dev"*) echo "FAIL: version not stamped (got dev)"; exit 1;; esac
   echo "== writable HOME ==";     touch "${HOME}/.coder-smoke" && echo "HOME=${HOME} writable"
   echo "== writable GOCACHE ==";  go env GOCACHE GOPATH
 '
