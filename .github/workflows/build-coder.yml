@@ -1,0 +1,122 @@
+name: build-coder
+
+on:
+  push:
+    branches: [main]
+    paths: ['coder/**', 'scripts/coder-smoke.sh', '.github/workflows/build-coder.yml']
+    tags: ['coder-v*']
+  pull_request:
+    paths: ['coder/**', 'scripts/coder-smoke.sh', '.github/workflows/build-coder.yml']
+  workflow_dispatch: {}
+  schedule:
+    # Weekly drift canary: rebuild the pinned ref to catch base-image / Go
+    # toolchain / dependency drift early.
+    - cron: '41 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-coder-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write       # push candidate to GHCR (trusted refs only)
+      id-token: write        # keyless provenance attestation
+      attestations: write
+    env:
+      IMAGE: ghcr.io/defilantech/llmkube-foreman-agent-coder
+      LOCAL: ghcr.io/defilantech/llmkube-foreman-agent-coder:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # arm64 leg builds under emulation. The Dockerfile cross-compiles every Go
+      # binary in the $BUILDPLATFORM stage and downloads prebuilt helm /
+      # golangci-lint, so QEMU only assembles the arm64 image layers (fast) --
+      # it never runs the Go compiler interpreted.
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Native amd64 build, loaded locally so the smoke runs the real image.
+      - name: Build (amd64, load for smoke)
+        uses: docker/build-push-action@v6
+        with:
+          context: coder
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.LOCAL }}
+          cache-from: type=gha,scope=coder
+          cache-to: type=gha,mode=max,scope=coder
+
+      - name: Coder smoke (non-root user execs every gate tool)
+        run: ./scripts/coder-smoke.sh "${{ env.LOCAL }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-coder-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + smoke above, but never reach
+      # here: GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Multi-arch build. amd64 is CI-smoked above; arm64 (Apple Silicon / arm
+      # edge) cannot be smoked here (no arm CI runner), but it is always *built*
+      # -- including on PRs -- so a broken arm64 cross-build is caught in review,
+      # not after merge. Reuses the amd64 build cache. Pushed only on trusted
+      # refs; the digest below is the multi-arch index digest.
+      - name: Build multi-arch (build-only validates arm64 on PRs; push on trusted refs)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: coder
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.IMAGE }}:candidate-${{ github.sha }}
+          cache-from: type=gha,scope=coder
+          provenance: true
+          sbom: true
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  # Stable required status check. Branch protection on main gates on "build";
+  # this job reports it and succeeds only if the image leg passed, so the
+  # requirement is independent of the matrix/leg names.
+  build:
+    needs: [image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify image build passed
+        run: |
+          result="${{ needs.image.result }}"
+          echo "image result: ${result}"
+          test "${result}" = "success"
