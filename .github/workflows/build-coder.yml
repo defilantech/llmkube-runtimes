@@ -108,7 +108,13 @@ jobs:
           context: coder
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ env.IMAGE }}:candidate-${{ github.sha }}
+          # Consume the full tag set from the meta step: always candidate-<sha>,
+          # plus the clean release tag (e.g. 0.8.21) and latest on a coder-v*
+          # tag push. Previously this hardcoded only candidate-<sha>, so the
+          # meta step was computed and discarded and release tags never shipped.
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha,scope=coder
           provenance: true
           sbom: true
