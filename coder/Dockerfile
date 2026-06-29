@@ -24,11 +24,11 @@
 
 # foreman-agent source pin: a github.com/defilantech/llmkube module ref the
 # `go install` below resolves (verified against the Go checksum database). Pinned
-# to a tagged release: v0.8.21 ships the coder-gate convergence trio -- codegen-drift
-# auto-resolve (#851), branch-from-upstream (#813), scope-overlap guard (#782) --
-# that previously forced a post-v0.8.19 commit pin, plus later coder-loop fixes.
+# to a tagged release: v0.8.22 ships the coder mutation gate (#899, test-presence
+# + neuter-survival) and the EditFreeStreak post-edit fix (#896/#898), on top of
+# the v0.8.21 coder-gate convergence trio (#851/#813/#782).
 # A tag (not a commit SHA) makes the stamped FleetNode version a real release.
-ARG LLMKUBE_REF=v0.8.21
+ARG LLMKUBE_REF=v0.8.22
 
 # Toolchain version pins. Keep in lockstep with the LLMKube Makefile
 # (HELM_VERSION, GOLANGCI_LINT_VERSION, CONTROLLER_TOOLS_VERSION) so the
