@@ -28,7 +28,7 @@
 # + neuter-survival) and the EditFreeStreak post-edit fix (#896/#898), on top of
 # the v0.8.21 coder-gate convergence trio (#851/#813/#782).
 # A tag (not a commit SHA) makes the stamped FleetNode version a real release.
-ARG LLMKUBE_REF=v0.8.25
+ARG LLMKUBE_REF=v0.8.26
 
 # Toolchain version pins. Keep in lockstep with the LLMKube Makefile
 # (HELM_VERSION, GOLANGCI_LINT_VERSION, CONTROLLER_TOOLS_VERSION) so the
