@@ -13,7 +13,13 @@
 # support); the resolved commit is recorded at /app/TURBO_SHA in the image.
 
 ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
-ARG TURBO_REF=tom/vulkan-turbo-fa
+# feature/turboquant-kv-cache tip (Tom's default branch, 2026-07-02). Supersedes
+# the tom/vulkan-turbo-fa pin: carries the fused TurboQuant K/V dequant in the
+# Vulkan flash-attention shaders (2f866175, PR #184) that fixes the gfx1151
+# turbo-KV prefill regression, PLUS the merged turbo4 KV cache type (38dc6659,
+# MMA decode default-on) for a higher-quality quant than turbo3. Pinned by SHA
+# for reproducibility; the resolved commit is echoed to /app/TURBO_SHA.
+ARG TURBO_REF=558c6b78e4f8cf92ec19539ff89b6d13f4183feb
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
