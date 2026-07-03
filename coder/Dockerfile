@@ -24,11 +24,13 @@
 
 # foreman-agent source pin: a github.com/defilantech/llmkube module ref the
 # `go install` below resolves (verified against the Go checksum database). Pinned
-# to a tagged release: v0.8.22 ships the coder mutation gate (#899, test-presence
-# + neuter-survival) and the EditFreeStreak post-edit fix (#896/#898), on top of
-# the v0.8.21 coder-gate convergence trio (#851/#813/#782).
+# to a tagged release: v0.8.27 ships the edit-fidelity work (#942/#943):
+# str_replace fuzzy line-window recovery for old_string drift, write_file
+# steering for new/nonexistent files, and the embedded-artifact gate kubectl
+# false-block removal (all validated live on the Strix). On top of the v0.8.22
+# coder mutation gate (#899) and the v0.8.21 coder-gate convergence trio.
 # A tag (not a commit SHA) makes the stamped FleetNode version a real release.
-ARG LLMKUBE_REF=v0.8.26
+ARG LLMKUBE_REF=v0.8.27
 
 # Toolchain version pins. Keep in lockstep with the LLMKube Makefile
 # (HELM_VERSION, GOLANGCI_LINT_VERSION, CONTROLLER_TOOLS_VERSION) so the
