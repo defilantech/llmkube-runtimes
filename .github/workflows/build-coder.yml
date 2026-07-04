@@ -44,6 +44,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # On a coder-v<version> tag push, build against that LLMKube release
+      # (LLMKUBE_REF=v<version>) so the ref is taken from the tag and can never
+      # drift from the Dockerfile ARG default. Empty on branch/PR/cron/dispatch
+      # builds, which keeps the Dockerfile ARG default (the drift-canary ref).
+      - name: Derive LLMKUBE_REF build-arg from tag
+        id: bargs
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/coder-v* ]]; then
+            echo "args=LLMKUBE_REF=v${GITHUB_REF#refs/tags/coder-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+
       # Native amd64 build, loaded locally so the smoke runs the real image.
       - name: Build (amd64, load for smoke)
         uses: docker/build-push-action@v6
@@ -51,6 +64,7 @@ jobs:
           context: coder
           platforms: linux/amd64
           load: true
+          build-args: ${{ steps.bargs.outputs.args }}
           tags: ${{ env.LOCAL }}
           cache-from: type=gha,scope=coder
           cache-to: type=gha,mode=max,scope=coder
@@ -107,6 +121,7 @@ jobs:
         with:
           context: coder
           platforms: linux/amd64,linux/arm64
+          build-args: ${{ steps.bargs.outputs.args }}
           push: ${{ github.event_name != 'pull_request' }}
           # Consume the full tag set from the meta step: always candidate-<sha>,
           # plus the clean release tag (e.g. 0.8.21) and latest on a coder-v*
