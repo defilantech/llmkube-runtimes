@@ -12,15 +12,15 @@
 # The fork tip is fetched live (the point is the just-synced EAGLE3/MTP/cohere2
 # support); the resolved commit is recorded at /app/TURBO_SHA in the image.
 
-ARG TURBO_REPO=https://github.com/Defilan/llama.cpp.git
-# fix/vulkan-turbo4-block-layout: Tom's feature/turboquant-kv-cache tip
-# (558c6b78) plus two Vulkan turbo4 fixes: the 66/68-byte block_turbo4_0
-# layout mismatch (drops the removed rnorm field) and stale Lloyd-Max
-# centroid tables (sync to the re-derived C reference). Red/green proven by
-# test-backend-ops on gfx1151 (528/528 turbo4 FA cases FAIL -> 9509/9509
-# sweep PASS); see turbo4-red-run.txt / turbo4-green-run.txt. Revert
-# TURBO_REPO to TheTom once the PR merges.
-ARG TURBO_REF=175a652ddd30a6ec3a743fa7498abff517b35b84
+ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
+# feature/turboquant-kv-cache tip. Now back on TheTom's canonical repo: our two
+# Vulkan turbo4 fixes are merged upstream (PR #204, TheTom@337f08e8) -- the
+# 66/68-byte block_turbo4_0 layout mismatch (drops the removed rnorm field) and
+# the stale Lloyd-Max centroid tables (sync to the re-derived C reference),
+# proven by test-backend-ops on gfx1151 (528/528 turbo4 FA FAIL -> 9509/9509
+# sweep PASS). This tip also carries the server context-checkpoint sidecar for
+# slot save/restore (PR #206), relevant to long-context GLM re-prefill latency.
+ARG TURBO_REF=3d42fa1eb6e9f35c80ac86084637f574c3c764db
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
