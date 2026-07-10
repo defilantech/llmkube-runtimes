@@ -1,0 +1,169 @@
+name: build-exporter
+
+on:
+  push:
+    branches: [main]
+    paths: ['rocm-smi-exporter/**', 'cmd/rocm-smi-exporter/**', '.github/workflows/build-exporter.yml']
+    tags: ['rocm-smi-exporter-v*']
+  pull_request:
+    paths: ['rocm-smi-exporter/**', 'cmd/rocm-smi-exporter/**', '.github/workflows/build-exporter.yml']
+  workflow_dispatch: {}
+  schedule:
+    # Weekly drift canary: rebuild to catch base-image / Go toolchain drift early.
+    - cron: '53 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-exporter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The exporter ships unit tests (unlike the coder/vulkan images, which build
+  # external binaries), so gate the build on them.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - run: go test ./cmd/rocm-smi-exporter/...
+
+  image:
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write       # push candidate to GHCR (trusted refs only)
+      id-token: write        # keyless provenance attestation
+      attestations: write
+    env:
+      IMAGE: ghcr.io/defilantech/llmkube-rocm-smi-exporter
+      LOCAL: ghcr.io/defilantech/llmkube-rocm-smi-exporter:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # arm64 leg builds under emulation. The Dockerfile cross-compiles the Go
+      # binary in the $BUILDPLATFORM stage, so QEMU only assembles the arm64
+      # image layers (fast) -- it never runs the Go compiler interpreted.
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # On a rocm-smi-exporter-v<version> tag push, stamp main.version from the
+      # tag. Empty on branch/PR/cron/dispatch builds (keeps the "dev" default).
+      - name: Derive VERSION build-arg from tag
+        id: bargs
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/rocm-smi-exporter-v* ]]; then
+            echo "args=VERSION=${GITHUB_REF#refs/tags/rocm-smi-exporter-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Native amd64 build, loaded locally so the smoke runs the real image.
+      # Context is the repo root: the Dockerfile builds the repo-local
+      # cmd/rocm-smi-exporter package (unlike coder/vulkan, which build external
+      # binaries and use their own dir as context).
+      - name: Build (amd64, load for smoke)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: rocm-smi-exporter/Dockerfile
+          platforms: linux/amd64
+          load: true
+          build-args: ${{ steps.bargs.outputs.args }}
+          tags: ${{ env.LOCAL }}
+          cache-from: type=gha,scope=exporter
+          cache-to: type=gha,mode=max,scope=exporter
+
+      # No GPU on the runner, so the exporter discovers 0 devices -- but it must
+      # still serve /metrics with the scrape-health series. This proves the
+      # static binary starts and serves as the non-root user.
+      - name: Smoke (/metrics responds)
+        run: |
+          docker run -d --name ex -p 9494:9494 "${{ env.LOCAL }}"
+          ok=""
+          for i in $(seq 1 15); do
+            if curl -sf localhost:9494/metrics -o /tmp/m; then ok=1; break; fi
+            sleep 1
+          done
+          docker logs ex || true
+          docker rm -f ex >/dev/null 2>&1 || true
+          test -n "$ok" || { echo "exporter did not serve /metrics"; exit 1; }
+          grep -q '^rocm_smi_gpus_discovered' /tmp/m || { echo "missing rocm_smi_gpus_discovered"; exit 1; }
+          echo "smoke OK"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-exporter-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + smoke above but never reach here:
+      # GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=candidate-${{ github.sha }}
+            type=match,pattern=rocm-smi-exporter-v(\d+\.\d+\.\d+.*),group=1
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/rocm-smi-exporter-v') }}
+
+      - name: Build multi-arch (build-only validates arm64 on PRs; push on trusted refs)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: rocm-smi-exporter/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: ${{ steps.bargs.outputs.args }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha,scope=exporter
+          provenance: true
+          sbom: true
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  # Stable required status check, mirroring build-coder.yml's `build` gate.
+  build:
+    needs: [test, image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify test + image passed
+        run: |
+          echo "test: ${{ needs.test.result }} | image: ${{ needs.image.result }}"
+          test "${{ needs.test.result }}" = "success"
+          test "${{ needs.image.result }}" = "success"
