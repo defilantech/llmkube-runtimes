@@ -71,21 +71,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "deb [signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} noble main" \
        > /etc/apt/sources.list.d/rocm.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-      hip-runtime-amd rocblas hipblaslt rocm-device-libs \
+      hip-runtime-amd rocblas hipblas hipblaslt rocm-device-libs \
       libgomp1 \
     && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+# hipblas provides libhipblas.so.3, a direct dependency of libggml-hip.so;
+# without it the HIP backend fails to dlopen and llama.cpp silently falls
+# back to CPU ("no usable GPU found"). rocblas/hipblaslt alone are not enough.
 ENV ROCBLAS_USE_HIPBLASLT=1 \
     LD_LIBRARY_PATH=/opt/rocm/lib:/usr/local/lib
 
+# GGML_BACKEND_DL=ON: ggml_backend_load_all() discovers libggml-*.so by
+# scanning the executable's directory and the current directory. Keep the
+# binaries and the backend .so files CO-LOCATED in /usr/local/lib (and set
+# WORKDIR there) so the HIP backend is found; splitting the binary into
+# /usr/local/bin leaves the backends undiscoverable ("no backends loaded").
 FROM runtime-base AS tools
 COPY --from=build /out/ /usr/local/lib/
-COPY --from=build /out-tools/ /usr/local/bin/
-RUN mv /usr/local/lib/llama-server /usr/local/bin/llama-server
-ENTRYPOINT ["/usr/local/bin/llama-bench"]
+COPY --from=build /out-tools/ /usr/local/lib/
+WORKDIR /usr/local/lib
+ENTRYPOINT ["/usr/local/lib/llama-bench"]
 
 FROM runtime-base AS server
 COPY --from=build /out/ /usr/local/lib/
-RUN mv /usr/local/lib/llama-server /usr/local/bin/llama-server
+WORKDIR /usr/local/lib
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/llama-server"]
+ENTRYPOINT ["/usr/local/lib/llama-server"]
