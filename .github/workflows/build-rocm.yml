@@ -1,0 +1,154 @@
+name: build-rocm
+
+on:
+  push:
+    branches: [main]
+    paths: ['rocm/**', '.github/workflows/build-rocm.yml']
+    tags: ['rocm-v*']
+  pull_request:
+    paths: ['rocm/**', '.github/workflows/build-rocm.yml']
+  workflow_dispatch: {}
+  schedule:
+    # Weekly drift canary: rebuild the pinned ref to catch base-image / dependency
+    # drift early. Upstream-latest auto-bump PRs are a follow-up (renovate).
+    - cron: '17 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-rocm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # One leg per image (server, tools). GitHub reports these as
+  # "image (server, ...)" / "image (tools, ...)"; the stable required status
+  # check is the `build` gate job below, so branch protection does not depend on
+  # the matrix leg names.
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write       # push candidate to GHCR (trusted refs only)
+      id-token: write        # keyless provenance attestation
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Production server runtime (llama-server only; kept minimal).
+          - target: server
+            image: ghcr.io/defilantech/llmkube-llama-rocm
+          # Benchmarking + diagnostics tooling (llama-bench, llama-cli,
+          # llama-server) from the SAME build stage / llama.cpp commit, so its
+          # numbers are directly comparable to the server runtime. Consumed
+          # off-cluster for hardware benchmarking, never by the operator.
+          - target: tools
+            image: ghcr.io/defilantech/llmkube-llama-rocm-tools
+    env:
+      IMAGE: ${{ matrix.image }}
+      LOCAL: ${{ matrix.image }}:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # The rocm/dev-ubuntu-24.04 -complete builder image is ~25GB; the default
+      # hosted-runner disk fills up before the build even starts. Reclaim
+      # preinstalled toolchains we don't use before adding swap.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          df -h /
+
+      # The HIP build is memory-heavy (parallel compile of llama.cpp + ggml
+      # HIP kernels); the default hosted-runner memory left it failing to fork
+      # on a fresh (cache-miss) build. Add swap headroom so the build is
+      # reliable, not luck-of-the-runner. The build's processes run in the
+      # host cgroup and use this swap.
+      - name: Add swap headroom
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (load locally for the gate)
+        uses: docker/build-push-action@v6
+        with:
+          context: rocm
+          target: ${{ matrix.target }}
+          load: true
+          tags: ${{ env.LOCAL }}
+          cache-from: type=gha,scope=rocm-${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=rocm-${{ matrix.target }}
+
+      # The real backend gate already ran inside the build stage (RTLD_NOW
+      # dlopen of libggml-hip.so, no GPU required). This step just proves the
+      # runtime stage is coherent: libs present, no missing-linker explosions
+      # at container start.
+      - name: Tier-1 gate (ROCm runtime image starts cleanly)
+        run: docker run --rm --entrypoint /bin/true "${LOCAL}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.target }}-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + gate above, but never reach here:
+      # GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. The candidate is unsigned-for-trust; the out-of-band GPU
+      # promoter smoke-tests it on real gfx1151 and applies the smoke-passed
+      # signature before anything consumes it (proposal 697, Tier-2 gate). ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push candidate
+        if: github.event_name != 'pull_request'
+        run: |
+          CAND="${IMAGE}:candidate-${GITHUB_SHA}"
+          docker tag "${LOCAL}" "${CAND}"
+          docker push "${CAND}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${CAND}" | cut -d@ -f2)"
+          echo "DIGEST=${DIGEST}" >> "${GITHUB_ENV}"
+          echo "Pushed ${CAND} (${DIGEST})"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
+
+  # Stable required status check. Branch protection on main gates on "build";
+  # this job reports it and succeeds only if every image matrix leg passed, so
+  # the requirement is independent of the matrix leg names.
+  build:
+    needs: [image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all image builds passed
+        run: |
+          result="${{ needs.image.result }}"
+          echo "image matrix result: ${result}"
+          test "${result}" = "success"
