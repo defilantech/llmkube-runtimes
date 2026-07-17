@@ -72,7 +72,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        > /etc/apt/sources.list.d/rocm.list \
     && apt-get update && apt-get install -y --no-install-recommends \
       hip-runtime-amd rocblas hipblaslt rocm-device-libs \
-    && apt-get purge -y curl gnupg && apt-get autoremove -y \
+      libgomp1 \
+    && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 ENV ROCBLAS_USE_HIPBLASLT=1 \
     LD_LIBRARY_PATH=/opt/rocm/lib:/usr/local/lib
