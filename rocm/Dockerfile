@@ -29,11 +29,20 @@ RUN git clone --depth 1 --branch "${LLAMACPP_REF}" https://github.com/ggml-org/l
        fi
 # GGML_HIP_NO_VMM is mandatory on gfx1151 (HIP VMM is broken there and failures
 # masquerade as driver errors). rocWMMA FlashAttention is the long-context win.
+# LLAMA_BUILD_UI/LLAMA_USE_PREBUILT_UI=OFF: llama.cpp otherwise embeds the
+# browser chat UI, fetched as a prebuilt tarball from an HF bucket keyed by a
+# git-describe build number. Our --depth 1 clone below has no tag history, so
+# that number resolves to a nonexistent bucket version; the fallback to
+# "latest" then mismatches this pinned commit's asset manifest and hard-fails
+# the build. These runtime images are consumed as inference backends (the
+# operator/API clients hit /v1/*, not a browser), so skip the UI entirely:
+# fewer build-time network dependencies and no drift exposure.
 RUN cmake -B build \
       -DGGML_NATIVE=OFF -DGGML_HIP=ON -DGGML_BACKEND_DL=ON \
       -DGPU_TARGETS="${GPU_TARGETS}" \
       -DGGML_HIP_ROCWMMA_FATTN=ON -DGGML_HIP_NO_VMM=ON -DGGML_HIP_MMQ_MFMA=ON \
       -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF \
+      -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
     && cmake --build build --config Release -j"$(nproc)" \
     && mkdir -p /out /out-tools \
     && find build -name '*.so*' -exec cp -P {} /out/ \; \
