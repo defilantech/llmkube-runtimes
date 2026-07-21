@@ -25,7 +25,7 @@ In Kubernetes, mount the host `/sys` read-only and set `SYSFS_ROOT=/host/sys`.
 
 Discovery/health: `rocm_smi_gpus_discovered`, `rocm_smi_gpu_info{card,pci_slot,vendor_id,device_id,…}`, `rocm_smi_scrape_success`, `rocm_smi_scrape_failures_total`, `rocm_smi_last_scrape_duration_seconds`.
 
-AMDGPU device (when the kernel exposes them): `rocm_smi_gpu_busy_percent`, `rocm_smi_memory_busy_percent`, `rocm_smi_vram_used_bytes`, `rocm_smi_vram_total_bytes`, `rocm_smi_visible_vram_{used,total}_bytes`, `rocm_smi_gtt_{used,total}_bytes`, `rocm_smi_pcie_replay_count`.
+AMDGPU device (when the kernel exposes them): `rocm_smi_gpu_busy_percent`, `rocm_smi_memory_busy_percent`, `rocm_smi_vram_used_bytes`, `rocm_smi_vram_total_bytes`, `rocm_smi_visible_vram_{used,total}_bytes`, `rocm_smi_gtt_{used,total}_bytes`, `rocm_smi_pcie_replay_total (counter)`.
 
 HWMON (when exposed): `rocm_smi_temperature_celsius{sensor}`, `rocm_smi_power_watts{type}`, `rocm_smi_fan_rpm{sensor}`, `rocm_smi_clock_hertz{sensor}`, `rocm_smi_voltage_volts{sensor}`.
 
