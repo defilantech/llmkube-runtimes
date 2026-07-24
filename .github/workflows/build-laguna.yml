@@ -1,0 +1,127 @@
+name: build-vulkan-laguna
+
+on:
+  push:
+    branches: [main]
+    paths: ['vulkan-laguna/**', 'scripts/**', '.github/workflows/build-laguna.yml']
+    tags: ['vulkan-laguna-v*']
+  pull_request:
+    paths: ['vulkan-laguna/**', 'scripts/**', '.github/workflows/build-laguna.yml']
+  workflow_dispatch: {}
+  schedule:
+    # Weekly drift canary, offset from the production Vulkan build so the two
+    # do not contend for runners. This variant tracks a moving fork branch by
+    # pinned SHA, so the canary also catches the pinned commit going away.
+    - cron: '47 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-vulkan-laguna-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Single image: the server runtime. No tools leg, unlike the production
+  # Vulkan build. Benchmark numbers come from the pure-upstream tools image so
+  # they stay comparable across models; this variant exists to SERVE Laguna.
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # push candidate to GHCR (trusted refs only)
+      id-token: write        # keyless provenance attestation
+      attestations: write
+    env:
+      IMAGE: ghcr.io/defilantech/llmkube-llama-vulkan-laguna
+      LOCAL: ghcr.io/defilantech/llmkube-llama-vulkan-laguna:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # vulkan-shaders-gen forks a compiler per shader and is memory-heavy;
+      # the default hosted-runner memory left it failing to fork on a fresh
+      # (cache-miss) build. Same headroom as the production Vulkan build.
+      - name: Add swap headroom
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build image (load locally for the gate)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: vulkan-laguna
+          target: server
+          load: true
+          tags: ${{ env.LOCAL }}
+          cache-from: type=gha,scope=vulkan-laguna-server
+          cache-to: type=gha,mode=max,scope=vulkan-laguna-server
+
+      - name: Tier-1 gate (Vulkan backend must load; catches #725-class breaks)
+        run: ./scripts/tier1-gate.sh "${{ env.LOCAL }}"
+
+      - name: Laguna gate (arch, tool-call parser, shipped chat template)
+        run: ./scripts/laguna-gate.sh "${{ env.LOCAL }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-vulkan-laguna-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + gate above, but never reach here:
+      # GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. The candidate is unsigned-for-trust; the out-of-band GPU
+      # promoter smoke-tests it on real gfx1151 before anything consumes it. ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push candidate
+        if: github.event_name != 'pull_request'
+        run: |
+          CAND="${IMAGE}:candidate-${GITHUB_SHA}"
+          docker tag "${LOCAL}" "${CAND}"
+          docker push "${CAND}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${CAND}" | cut -d@ -f2)"
+          echo "DIGEST=${DIGEST}" >> "${GITHUB_ENV}"
+          echo "Pushed ${CAND} (${DIGEST})"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
+
+  # Stable required status check, mirroring the production build's gate job so
+  # branch protection can require a fixed name.
+  build-laguna:
+    needs: [image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the image build passed
+        run: |
+          result="${{ needs.image.result }}"
+          echo "image result: ${result}"
+          test "${result}" = "success"
