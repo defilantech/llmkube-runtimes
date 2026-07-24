@@ -60,12 +60,13 @@ RUN cmake -B build \
     && cp build/bin/llama-server /out/ \
     && cp build/bin/llama-bench build/bin/llama-cli /out-tools/
 # Laguna guard, GPU-independent. The llama.cpp arch-name table compiles the
-# string "laguna" into the binary only when the pin includes upstream laguna
-# support. A pin that predates the 2026-07-22 merge would build cleanly but
-# silently lack the arch; this fails the build instead of shipping an image
-# that cannot load Laguna GGUFs.
-RUN grep -qa laguna /out/llama-server \
-    || { echo "ERROR: laguna arch not compiled into llama-server; LLAMACPP pin predates upstream laguna support"; exit 1; }
+# string "laguna" into libllama (llama-server links it dynamically, so the
+# string lives in libllama.so, not the server binary). A pin that predates the
+# 2026-07-22 merge would build cleanly but silently lack the arch; this fails
+# the build instead of shipping an image that cannot load Laguna GGUFs. Grep
+# recursively over /out so it holds whether libllama is shared or static.
+RUN grep -rqa laguna /out/ \
+    || { echo "ERROR: laguna arch not present in the built llama.cpp; LLAMACPP pin predates upstream laguna support"; exit 1; }
 # #725 guard, GPU-independent. The upstream break was an undefined shader symbol
 # in libggml-vulkan.so that bound lazily, so it only crashed at shader-use time
 # on a real GPU. RTLD_NOW forces every relocation to resolve at dlopen, so a
