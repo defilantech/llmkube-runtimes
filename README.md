@@ -4,6 +4,8 @@ Inference runtime container images for [LLMKube](https://github.com/defilantech/
 
 Today this repo builds the **AMD/Vulkan** llama.cpp runtime as two images from one build: a minimal **server** image (what the operator runs) and a **tools** image (`llama-bench` + `llama-cli`, for hardware benchmarking and diagnostics). The layout (`vulkan/`) is set up so other backends (CUDA, Intel, CPU) can be added as sibling directories later without restructuring.
 
+It also builds a **Laguna variant** of that Vulkan server runtime (`vulkan-laguna/`), for serving poolside Laguna models with working tool calling. See [Laguna variant](#laguna-variant) below.
+
 It also builds the **Foreman coder-agent** toolchain image (`coder/`): the foreman-agent binary plus the Go toolchain its in-workspace self-gate needs. Same discipline as the runtime images: pinned inputs, built here, owned. See [Coder agent image](#coder-agent-image) below.
 
 ## Why this repo exists
@@ -40,6 +42,16 @@ A built image is a **candidate**. Only an image a real GPU host has verified and
 
 Tier 2 (the promoter) lands in a follow-up; this bootstrap is Tier 1.
 
+## Laguna variant
+
+`ghcr.io/defilantech/llmkube-llama-vulkan-laguna` is the Vulkan server runtime, built from a fork, for serving [poolside](https://huggingface.co/poolside) Laguna models with working tool calling.
+
+Upstream llama.cpp can load Laguna (the arch merged 2026-07-22, first released in `b10103`) but cannot parse its tool calls: Laguna emits poolside's native format and upstream's `common/chat.cpp` has no handler for it, so a tool call arrives as raw text in `message.content` with `finish_reason: stop` and an OpenAI-API client sees no `tool_calls` at all. That breaks any agent loop, and it breaks quietly, looking like a model quality problem.
+
+This variant builds from [`TheTom/llama-cpp-turboquant`](https://github.com/TheTom/llama-cpp-turboquant) (branch `laguna/port`, pinned by commit SHA), whose **differential autoparser** derives a tool-call parser from the model's chat template instead of hand-writing one per model. It also ships that fork's corrected chat templates and defaults to one, because poolside's released GGUF embeds a template that silently cannot parse tool calls. Full detail, including how to diagnose a template problem: [`docs/laguna-variant.md`](docs/laguna-variant.md).
+
+The production `vulkan/` image stays pure upstream and is unaffected. The two pins move independently. Server image only; benchmark numbers come from the pure-upstream tools image so they stay comparable across models.
+
 ## Coder agent image
 
 `ghcr.io/defilantech/llmkube-foreman-agent-coder` — a Foreman agent that can run its own coder gate.
@@ -72,6 +84,15 @@ docker build --target tools -t llmkube-llama-vulkan-tools:dev vulkan/
 ```
 
 Bump the pinned llama.cpp ref by editing `LLAMACPP_REF` + `LLAMACPP_SHA` in `vulkan/Dockerfile` (the SHA check fails the build if they disagree); both images move together.
+
+```bash
+# Laguna variant (server only)
+docker build -t llmkube-llama-vulkan-laguna:dev vulkan-laguna/
+./scripts/tier1-gate.sh llmkube-llama-vulkan-laguna:dev
+./scripts/laguna-gate.sh llmkube-llama-vulkan-laguna:dev
+```
+
+Bump the Laguna variant by editing `LLAMACPP_SHA` in `vulkan-laguna/Dockerfile`. It pins a bare commit SHA with no companion ref (the branch it tracks moves), and it is independent of the production pin.
 
 ## Tags
 
