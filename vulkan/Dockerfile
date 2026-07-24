@@ -13,8 +13,12 @@
 # decide whether a bump is safe before anything consumes it.
 
 # llama.cpp release tag + the exact commit it must resolve to (immutable pin).
-ARG LLAMACPP_REF=b9663
-ARG LLAMACPP_SHA=fdd109883df94789729cf3c411b709e0ecb129cc
+# b10103 (2026-07-23) is the first release after poolside Laguna support merged
+# upstream (2026-07-22), so this image can serve Laguna-family GGUFs. The build
+# asserts the laguna arch actually compiled in (below); the on-hardware Laguna
+# smoke on gfx1151 is the real proof that its op sequence runs on Vulkan.
+ARG LLAMACPP_REF=b10103
+ARG LLAMACPP_SHA=c588c4f47683e73ad2d69f50480bec6cc85fd0f7
 # ubuntu:26.04 pinned by digest. 26.04's Mesa is new enough for gfx1151 (Strix
 # Halo) RADV; Debian stable / older Ubuntu ship Mesa too old to enumerate it.
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
@@ -55,6 +59,13 @@ RUN cmake -B build \
     && find build -name '*.so*' -exec cp -P {} /out/ \; \
     && cp build/bin/llama-server /out/ \
     && cp build/bin/llama-bench build/bin/llama-cli /out-tools/
+# Laguna guard, GPU-independent. The llama.cpp arch-name table compiles the
+# string "laguna" into the binary only when the pin includes upstream laguna
+# support. A pin that predates the 2026-07-22 merge would build cleanly but
+# silently lack the arch; this fails the build instead of shipping an image
+# that cannot load Laguna GGUFs.
+RUN grep -qa laguna /out/llama-server \
+    || { echo "ERROR: laguna arch not compiled into llama-server; LLAMACPP pin predates upstream laguna support"; exit 1; }
 # #725 guard, GPU-independent. The upstream break was an undefined shader symbol
 # in libggml-vulkan.so that bound lazily, so it only crashed at shader-use time
 # on a real GPU. RTLD_NOW forces every relocation to resolve at dlopen, so a
