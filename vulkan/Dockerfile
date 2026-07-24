@@ -43,9 +43,17 @@ RUN git clone --depth 1 --branch "${LLAMACPP_REF}" https://github.com/ggml-org/l
 # image size, and peak memory, the last of which exhausted the CI runner and
 # made vulkan-shaders-gen fail to fork. LLAMA_CURL=OFF: models are staged
 # locally by the LLMKube Model download Job, and the smoke gate runs offline.
+# LLAMA_BUILD_UI/LLAMA_USE_PREBUILT_UI=OFF: llama.cpp otherwise embeds the
+# browser chat UI, fetched as a prebuilt tarball keyed by a git-describe build
+# number. Our --depth 1 clone has no tag history, so that number resolves to a
+# nonexistent version and hard-fails the build (tools/ui: llama-ui-embed). These
+# runtime images are consumed as inference backends (clients hit /v1/*, not a
+# browser), so skip the UI: fewer build-time network deps, no drift exposure.
+# Mirrors rocm/Dockerfile, which already carries this fix.
 RUN cmake -B build \
       -DGGML_NATIVE=OFF -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON \
       -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF \
+      -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
     && cmake --build build --config Release -j"$(nproc)" \
     && mkdir -p /out /out-tools \
     && find build -name '*.so*' -exec cp -P {} /out/ \; \
