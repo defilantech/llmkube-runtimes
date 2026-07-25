@@ -121,17 +121,16 @@ Same hardware contract as the production Vulkan image: mount `/dev/dri` via a
 device-plugin resource, grant the host render group through
 `securityContext.supplementalGroups`, and request no `nvidia.com/gpu`.
 
-Conservative flags for Strix Halo (`gfx1151`), matching what the model was
-validated with:
+Flags for Strix Halo (`gfx1151`), measured rather than assumed:
 
 ```yaml
 extraArgs:
   - --jinja              # required: the autoparser runs on this path
   - --no-mmap            # the Q4_K_M weights exceed the mmap-friendly window
   - --flash-attn
-  - "off"                # flash attention on RDNA3.5 is flagged upstream
+  - "on"                 # worth up to 2.2x decode at depth, see below
   - --spec-type
-  - none                 # DFlash speculative decode needs flash attention on
+  - none
   - --cache-type-k
   - f16
   - --cache-type-v
@@ -144,6 +143,65 @@ stop parsing.
 Thinking output is handled by the template the image already defaults to; add
 `--reasoning off` if you want the model's reasoning suppressed rather than
 returned in a separate field.
+
+### Turn flash attention on
+
+**An earlier version of this document recommended `--flash-attn off`. That was
+wrong and cost real throughput.** It was off out of deference to an upstream
+note that flash attention is unstable on RDNA3.5. Measured on gfx1151, with
+only that flag changing:
+
+| depth (tokens) | prefill off -> on | decode off -> on |
+|---------------:|------------------:|-----------------:|
+|  1,378 | 174 -> 394 (2.27x) | 23.35 -> 27.34 (1.17x) |
+| 21,025 | 250 -> 288 (1.15x) | 15.27 -> 24.47 (1.60x) |
+| 56,159 | 107 -> 136 (1.27x) |  9.33 -> 20.73 (2.22x) |
+
+Decode retention at 56k rises from 40.0% to 75.8% of the shallow baseline.
+
+The decode gain **grows with depth**, which is the opposite of the usual
+expectation. Flash attention's textbook win is not materializing the N-by-N
+score matrix, and decode has no such matrix (a single query token against N
+cached keys). The win here is different: without it, llama.cpp makes several
+passes over the KV cache per generated token, and flash attention fuses them
+into one. The KV read is not eliminated, but the pass count collapses, and on
+a unified-memory APU that saving scales with KV size.
+
+Correctness was verified, not assumed, since flash attention reassociates
+summation: tool calls still parse, prose stays coherent, and a needle planted
+mid-document was retrieved verbatim at 47,813 prompt tokens. Stability held for
+26 minutes of sustained load to 56k with zero restarts, on a host with
+`amdgpu.lockup_timeout=20000`.
+
+If you serve this model on a different AMD part, measure before assuming the
+same result. The upstream caution may well hold elsewhere.
+
+### Speculative decoding (DFlash)
+
+poolside publishes a DFlash drafter, and it is already inside the same GGUF
+repo as the weights: `laguna-s-2.1-DFlash-BF16.gguf` (1.11B params, ~2.1GB).
+No conversion needed. It requires flash attention on.
+
+```
+-md /path/to/laguna-s-2.1-DFlash-BF16.gguf --spec-type draft-dflash --spec-draft-n-max 15
+```
+
+Measured on a realistic code-editing request: **53.8% draft acceptance** and
+**1.15x decode** (27.53 -> 31.63 tok/s). Useful, but well short of what
+speculative decoding buys on some other stacks, and it costs 2.1GB of unified
+memory that the KV cache would otherwise use.
+
+**It is workload-sensitive to an extreme degree.** On synthetic random-text
+prompts the same setup gets 0 to 8% acceptance and runs **2.1x slower** than no
+speculation at all, because every rejected draft is wasted compute. Speculation
+predicts the model's own output, so it only pays when that output is
+predictable, which for a coding model means editing code that is already in
+context. Benchmark it on the workload you actually run, never on synthetic
+filler.
+
+Depth behaviour on realistic content is unmeasured. LLMKube cannot express this
+today in any case: `SpeculativeDecodingType` has no `dflash` value and there is
+no field for a draft model path, so it needs bare-metal `llama-server` for now.
 
 ## Gates
 
