@@ -140,9 +140,42 @@ extraArgs:
 `--jinja` is load-bearing. Without it the autoparser never runs and tool calls
 stop parsing.
 
-Thinking output is handled by the template the image already defaults to; add
-`--reasoning off` if you want the model's reasoning suppressed rather than
-returned in a separate field.
+### Controlling thinking: use a persona, not a flag
+
+**The lever is not where you would look for it.** An earlier version of this
+document said thinking is handled by the template default and pointed at
+`--reasoning off`. Both halves were wrong, and this is worth spelling out
+because every obvious control surface here is a dead end.
+
+The shipped template already sets `enable_thinking` to false, and passing the
+kwarg explicitly changes nothing, because it was already false. **The model
+emits reasoning anyway.** `--reasoning off` was never verified to stop
+generation as opposed to relocating the output, so do not rely on it either.
+
+What actually works is a **named professional identity in the system prompt**.
+Measured on gfx1151, same coding prompt, temp 0.6:
+
+| system prompt | fired | reasoning |
+|---|---|---|
+| no persona | 6/6 samples | 1910 - 3099 chars |
+| `You are a senior staff engineer.` | 0/5 samples | 0 chars |
+
+Content length was 327 to 546 chars in both arms, so without a persona roughly
+**80 to 85 percent of generated tokens were thinking**. One probe with a
+300-token budget spent all of it reasoning and returned empty content.
+
+The effect holds in a real multi-turn agentic loop, not just single-turn
+probes. Adding one persona line to an agentic coder's system prompt took a
+46-minute task from 35,913 characters of reasoning across 10 blocks down to
+2,594 across 3, a **93 percent reduction**, with the same verdict and a
+comparable diff.
+
+This matters beyond token cost: independent behavioural testing
+([TheTom/offlabel](https://github.com/TheTom/offlabel/blob/main/models/laguna-s-2.1.md))
+finds thinking-ON is net-negative for this model on held-out work, scoring
+worse on long-running coding and failing to complete a 30-turn agentic probe.
+So for a coding or agent role, a persona line is not a nicety, it is the
+configuration.
 
 ### Turn flash attention on
 
