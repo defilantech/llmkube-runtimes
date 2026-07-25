@@ -164,11 +164,17 @@ Content length was 327 to 546 chars in both arms, so without a persona roughly
 **80 to 85 percent of generated tokens were thinking**. One probe with a
 300-token budget spent all of it reasoning and returned empty content.
 
-The effect holds in a real multi-turn agentic loop, not just single-turn
-probes. Adding one persona line to an agentic coder's system prompt took a
-46-minute task from 35,913 characters of reasoning across 10 blocks down to
-2,594 across 3, a **93 percent reduction**, with the same verdict and a
-comparable diff.
+The effect is weaker in a real multi-turn agentic loop than these single-turn
+probes suggest, which is worth knowing before relying on it. In a 20-plus turn
+tool-using loop, adding the persona line took reasoning from 35,913 characters
+across 10 blocks down to 20,573 across 9: a **43 percent cut in volume**, but
+the block count barely moved. It shortens the thinking rather than stopping it.
+
+An additional system-prompt block of explicit rules (the integrity clause in
+the LLMKube coder prompt) took the same task down to 2,594 characters across 3
+blocks. So the persona is one lever and prompt weight in general appears to be
+another; do not attribute the whole effect to the persona alone, which an
+earlier draft of this document did.
 
 This matters beyond token cost: independent behavioural testing
 ([TheTom/offlabel](https://github.com/TheTom/offlabel/blob/main/models/laguna-s-2.1.md))
