@@ -1,4 +1,4 @@
-# rocm-smi-exporter
+# amdgpu-exporter
 
 Small Prometheus exporter for AMD GPU / ROCm telemetry on Kubernetes nodes.
 
@@ -8,8 +8,8 @@ multi-arch, and Talos-friendly, and — critically — it **enumerates the Strix
 `gfx1151` iGPU**, which the Instinct-scoped `device-metrics-exporter` /
 `amd_smi_exporter` do not (see [defilantech/LLMKube#700](https://github.com/defilantech/LLMKube/issues/700)).
 
-- **Source:** `cmd/rocm-smi-exporter` (pure Go stdlib, no module dependencies).
-- **Image:** `ghcr.io/defilantech/llmkube-rocm-smi-exporter` (distroless `nonroot`, multi-arch).
+- **Source:** `cmd/amdgpu-exporter` (pure Go stdlib, no module dependencies).
+- **Image:** `ghcr.io/defilantech/llmkube-amdgpu-exporter` (distroless `nonroot`, multi-arch).
 - **Endpoint:** `GET /metrics` on `:9494`.
 
 ## Configuration
@@ -23,11 +23,11 @@ In Kubernetes, mount the host `/sys` read-only and set `SYSFS_ROOT=/host/sys`.
 
 ## Metrics
 
-Discovery/health: `rocm_smi_gpus_discovered`, `rocm_smi_gpu_info{card,pci_slot,vendor_id,device_id,…}`, `rocm_smi_scrape_success`, `rocm_smi_scrape_failures_total`, `rocm_smi_last_scrape_duration_seconds`.
+Discovery/health: `amdgpu_gpus_discovered`, `amdgpu_gpu_info{card,pci_slot,vendor_id,device_id,…}`, `amdgpu_scrape_success`, `amdgpu_scrape_failures_total`, `amdgpu_last_scrape_duration_seconds`.
 
-AMDGPU device (when the kernel exposes them): `rocm_smi_gpu_busy_percent`, `rocm_smi_memory_busy_percent`, `rocm_smi_vram_used_bytes`, `rocm_smi_vram_total_bytes`, `rocm_smi_visible_vram_{used,total}_bytes`, `rocm_smi_gtt_{used,total}_bytes`, `rocm_smi_pcie_replay_total (counter)`.
+AMDGPU device (when the kernel exposes them): `amdgpu_gpu_busy_percent`, `amdgpu_memory_busy_percent`, `amdgpu_vram_used_bytes`, `amdgpu_vram_total_bytes`, `amdgpu_visible_vram_{used,total}_bytes`, `amdgpu_gtt_{used,total}_bytes`, `amdgpu_pcie_replay_total (counter)`.
 
-HWMON (when exposed): `rocm_smi_temperature_celsius{sensor}`, `rocm_smi_power_watts{type}`, `rocm_smi_fan_rpm{sensor}`, `rocm_smi_clock_hertz{sensor}`, `rocm_smi_voltage_volts{sensor}`.
+HWMON (when exposed): `amdgpu_temperature_celsius{sensor}`, `amdgpu_power_watts{type}`, `amdgpu_fan_rpm{sensor}`, `amdgpu_clock_hertz{sensor}`, `amdgpu_voltage_volts{sensor}`.
 
 ## DaemonSet (reference)
 
@@ -38,19 +38,19 @@ so it runs read-only-rootfs as `nobody`:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: rocm-smi-exporter
+  name: amdgpu-exporter
 spec:
   selector:
-    matchLabels: { app.kubernetes.io/name: rocm-smi-exporter }
+    matchLabels: { app.kubernetes.io/name: amdgpu-exporter }
   template:
     metadata:
-      labels: { app.kubernetes.io/name: rocm-smi-exporter }
+      labels: { app.kubernetes.io/name: amdgpu-exporter }
     spec:
       nodeSelector:
         node-role.kubernetes.io/rocm-worker: "true"
       containers:
         - name: exporter
-          image: ghcr.io/defilantech/llmkube-rocm-smi-exporter:latest
+          image: ghcr.io/defilantech/llmkube-amdgpu-exporter:latest
           env:
             - { name: SYSFS_ROOT, value: /host/sys }
           ports:
@@ -81,6 +81,6 @@ the files present on the node.
 
 ```bash
 # from the repo root (context must be the module root)
-docker build -f rocm-smi-exporter/Dockerfile -t rocm-smi-exporter:dev .
-go test ./cmd/rocm-smi-exporter/...
+docker build -f amdgpu-exporter/Dockerfile -t amdgpu-exporter:dev .
+go test ./cmd/amdgpu-exporter/...
 ```

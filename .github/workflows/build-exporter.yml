@@ -3,10 +3,10 @@ name: build-exporter
 on:
   push:
     branches: [main]
-    paths: ['rocm-smi-exporter/**', 'cmd/rocm-smi-exporter/**', '.github/workflows/build-exporter.yml']
-    tags: ['rocm-smi-exporter-v*']
+    paths: ['amdgpu-exporter/**', 'cmd/amdgpu-exporter/**', '.github/workflows/build-exporter.yml']
+    tags: ['amdgpu-exporter-v*']
   pull_request:
-    paths: ['rocm-smi-exporter/**', 'cmd/rocm-smi-exporter/**', '.github/workflows/build-exporter.yml']
+    paths: ['amdgpu-exporter/**', 'cmd/amdgpu-exporter/**', '.github/workflows/build-exporter.yml']
   workflow_dispatch: {}
   schedule:
     # Weekly drift canary: rebuild to catch base-image / Go toolchain drift early.
@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.26'
-      - run: go test ./cmd/rocm-smi-exporter/...
+      - run: go test ./cmd/amdgpu-exporter/...
 
   image:
     needs: [test]
@@ -40,8 +40,8 @@ jobs:
       id-token: write        # keyless provenance attestation
       attestations: write
     env:
-      IMAGE: ghcr.io/defilantech/llmkube-rocm-smi-exporter
-      LOCAL: ghcr.io/defilantech/llmkube-rocm-smi-exporter:ci-${{ github.sha }}
+      IMAGE: ghcr.io/defilantech/llmkube-amdgpu-exporter
+      LOCAL: ghcr.io/defilantech/llmkube-amdgpu-exporter:ci-${{ github.sha }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -54,26 +54,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      # On a rocm-smi-exporter-v<version> tag push, stamp main.version from the
+      # On a amdgpu-exporter-v<version> tag push, stamp main.version from the
       # tag. Empty on branch/PR/cron/dispatch builds (keeps the "dev" default).
       - name: Derive VERSION build-arg from tag
         id: bargs
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/rocm-smi-exporter-v* ]]; then
-            echo "args=VERSION=${GITHUB_REF#refs/tags/rocm-smi-exporter-v}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/amdgpu-exporter-v* ]]; then
+            echo "args=VERSION=${GITHUB_REF#refs/tags/amdgpu-exporter-v}" >> "$GITHUB_OUTPUT"
           else
             echo "args=" >> "$GITHUB_OUTPUT"
           fi
 
       # Native amd64 build, loaded locally so the smoke runs the real image.
       # Context is the repo root: the Dockerfile builds the repo-local
-      # cmd/rocm-smi-exporter package (unlike coder/vulkan, which build external
+      # cmd/amdgpu-exporter package (unlike coder/vulkan, which build external
       # binaries and use their own dir as context).
       - name: Build (amd64, load for smoke)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          file: rocm-smi-exporter/Dockerfile
+          file: amdgpu-exporter/Dockerfile
           platforms: linux/amd64
           load: true
           build-args: ${{ steps.bargs.outputs.args }}
@@ -95,7 +95,7 @@ jobs:
           docker logs ex || true
           docker rm -f ex >/dev/null 2>&1 || true
           test -n "$ok" || { echo "exporter did not serve /metrics"; exit 1; }
-          grep -q '^rocm_smi_gpus_discovered' /tmp/m || { echo "missing rocm_smi_gpus_discovered"; exit 1; }
+          grep -q '^amdgpu_gpus_discovered' /tmp/m || { echo "missing amdgpu_gpus_discovered"; exit 1; }
           echo "smoke OK"
 
       - name: Generate SBOM
@@ -129,15 +129,15 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=candidate-${{ github.sha }}
-            type=match,pattern=rocm-smi-exporter-v(\d+\.\d+\.\d+.*),group=1
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/rocm-smi-exporter-v') }}
+            type=match,pattern=amdgpu-exporter-v(\d+\.\d+\.\d+.*),group=1
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/amdgpu-exporter-v') }}
 
       - name: Build multi-arch (build-only validates arm64 on PRs; push on trusted refs)
         id: push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          file: rocm-smi-exporter/Dockerfile
+          file: amdgpu-exporter/Dockerfile
           platforms: linux/amd64,linux/arm64
           build-args: ${{ steps.bargs.outputs.args }}
           push: ${{ github.event_name != 'pull_request' }}

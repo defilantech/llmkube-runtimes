@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# rocm-smi-exporter: a small Prometheus exporter for AMD GPU telemetry on
+# amdgpu-exporter: a small Prometheus exporter for AMD GPU telemetry on
 # Kubernetes nodes. It reads the Linux AMDGPU sysfs + hwmon trees directly, so it
 # needs no rocm-smi binary and no ROCm userspace in the image — which is exactly
 # what lets it enumerate the Strix Halo gfx1151 iGPU that the Instinct-scoped
@@ -26,24 +26,24 @@ WORKDIR /src
 # stdlib-only: go.mod/go.sum give the module context; the package pulls no
 # external deps, so nothing is downloaded.
 COPY go.mod go.sum ./
-COPY cmd/rocm-smi-exporter ./cmd/rocm-smi-exporter
+COPY cmd/amdgpu-exporter ./cmd/amdgpu-exporter
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
         -ldflags="-s -w -X main.version=${VERSION}" \
-        -o /out/rocm-smi-exporter ./cmd/rocm-smi-exporter \
-    && test -x /out/rocm-smi-exporter
+        -o /out/amdgpu-exporter ./cmd/amdgpu-exporter \
+    && test -x /out/amdgpu-exporter
 
 # Runtime: distroless static nonroot — no shell, no package manager, uid 65534.
 # The exporter mounts the host /sys read-only (SYSFS_ROOT=/host/sys) and serves
 # /metrics on :9494. Read-only-rootfs friendly: it writes nothing.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6
 
-LABEL org.opencontainers.image.title="llmkube-rocm-smi-exporter" \
+LABEL org.opencontainers.image.title="llmkube-amdgpu-exporter" \
       org.opencontainers.image.description="Prometheus exporter for AMD GPU telemetry via AMDGPU sysfs/hwmon; enumerates the gfx1151 iGPU without a ROCm userspace" \
       org.opencontainers.image.source="https://github.com/defilantech/llmkube-runtimes" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-COPY --from=build /out/rocm-smi-exporter /rocm-smi-exporter
+COPY --from=build /out/amdgpu-exporter /amdgpu-exporter
 
 USER 65534:65534
 EXPOSE 9494
-ENTRYPOINT ["/rocm-smi-exporter"]
+ENTRYPOINT ["/amdgpu-exporter"]
