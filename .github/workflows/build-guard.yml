@@ -1,0 +1,44 @@
+name: build-guard
+
+# Branch protection requires the `build` status check, but every real build
+# workflow (build.yml, build-coder, build-laguna, build-rocm) is path-scoped to
+# its own image dir. A change that touches none of those paths (docs, this
+# guard, repo meta) never starts a build job, so the required `build` check
+# never reports and the PR is blocked forever on a check that was correctly
+# skipped, not failed.
+#
+# This workflow supplies a passing `build` context for exactly those changes.
+# `paths-ignore` lists every buildable path, so:
+#   - docs-only / meta-only PR  -> this runs, reports `build` green
+#   - a buildable-path PR       -> this is skipped, the real workflow reports `build`
+#   - a mixed PR                -> both run, both green (harmless)
+# The real build workflow filenames are listed explicitly rather than a
+# `build*.yml` glob so that editing THIS file still triggers the guard.
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'vulkan/**'
+      - 'vulkan-laguna/**'
+      - 'coder/**'
+      - 'rocm/**'
+      - 'scripts/**'
+      - '.github/workflows/build.yml'
+      - '.github/workflows/build-coder.yml'
+      - '.github/workflows/build-laguna.yml'
+      - '.github/workflows/build-rocm.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Job id is `build` so the check-run context matches the required status
+  # check that the path-scoped build workflows also produce.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No buildable paths changed; build gate satisfied."
