@@ -11,12 +11,11 @@
 # arm64 in the $BUILDPLATFORM stage without paying QEMU's interpreted-compile
 # cost — mirroring coder/Dockerfile and vulkan/Dockerfile.
 
-ARG GO_VERSION=1.26
 
 # Build stage. Pinned to $BUILDPLATFORM (the runner's native arch) and told to
 # cross-compile via GOOS/GOARCH, so the Go compiler always runs natively. CGO
 # disabled -> a static binary that runs on the distroless base unchanged.
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS build
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647 AS build
 ARG TARGETOS
 ARG TARGETARCH
 # VERSION stamps main.version (surfaced in logs / build info). A tag push sets it
@@ -36,7 +35,7 @@ RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
 # Runtime: distroless static nonroot — no shell, no package manager, uid 65534.
 # The exporter mounts the host /sys read-only (SYSFS_ROOT=/host/sys) and serves
 # /metrics on :9494. Read-only-rootfs friendly: it writes nothing.
-FROM gcr.io/distroless/static-debian13:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6
 
 LABEL org.opencontainers.image.title="llmkube-rocm-smi-exporter" \
       org.opencontainers.image.description="Prometheus exporter for AMD GPU telemetry via AMDGPU sysfs/hwmon; enumerates the gfx1151 iGPU without a ROCm userspace" \
