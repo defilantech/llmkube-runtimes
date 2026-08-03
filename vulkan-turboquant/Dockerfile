@@ -29,7 +29,7 @@ ARG TURBO_REPO=https://github.com/Defilan/llama.cpp.git
 # TQ4_1S, and the Vulkan SPIR-V build is driven by explicit string_to_spv()
 # calls with no globbing, so dequant_tq4_1s.comp / mul_mat_vec_tq4_1s.comp are
 # never compiled. This image is the harness for fixing that on real gfx1151.
-ARG TURBO_REF=348dac47b506bca4373c0effd031f9f5e47befb6
+ARG TURBO_REF=9c01750ca37daf3192b518becb4ce1151eba2d1d
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
