@@ -13,14 +13,20 @@
 # support); the resolved commit is recorded at /app/TURBO_SHA in the image.
 
 ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
-# feature/turboquant-kv-cache tip. Now back on TheTom's canonical repo: our two
-# Vulkan turbo4 fixes are merged upstream (PR #204, TheTom@337f08e8) -- the
-# 66/68-byte block_turbo4_0 layout mismatch (drops the removed rnorm field) and
-# the stale Lloyd-Max centroid tables (sync to the re-derived C reference),
-# proven by test-backend-ops on gfx1151 (528/528 turbo4 FA FAIL -> 9509/9509
-# sweep PASS). This tip also carries the server context-checkpoint sidecar for
-# slot save/restore (PR #206), relevant to long-context GLM re-prefill latency.
-ARG TURBO_REF=3d42fa1eb6e9f35c80ac86084637f574c3c764db
+# feature/turboquant-kv-cache tip. Our two Vulkan turbo4 fixes are merged
+# upstream (PR #204) -- the 66/68-byte block_turbo4_0 layout mismatch (drops the
+# removed rnorm field) and the stale Lloyd-Max centroid tables (sync to the
+# re-derived C reference), proven by test-backend-ops on gfx1151 (528/528 turbo4
+# FA FAIL -> 9509/9509 sweep PASS).
+#
+# Bumped to the 2026-08-03 tip to baseline TQ3_1S/TQ4_1S Vulkan weight-type work.
+# That tip carries DeepSeek-V4 arch support (PR #224/#254, CUDA+Metal kernels
+# only) and the TQ4_1S Vulkan shaders added in 2a716ac4 -- which are ORPHANED:
+# ggml-vulkan.cpp and vulkan-shaders-gen.cpp reference neither TQ3_1S nor
+# TQ4_1S, and the Vulkan SPIR-V build is driven by explicit string_to_spv()
+# calls with no globbing, so dequant_tq4_1s.comp / mul_mat_vec_tq4_1s.comp are
+# never compiled. This image is the harness for fixing that on real gfx1151.
+ARG TURBO_REF=d0e2a8b64de4d42568932886fec638ef2a7e1d10
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
@@ -40,15 +46,30 @@ RUN git init -q && git remote add origin "${TURBO_REPO}" \
     && echo "TurboQuant fork at $(cat /tmp/TURBO_SHA)"
 # Same Vulkan build switches as the production image: dynamic backend loading,
 # dlopen-able libggml-vulkan.so, single generic x86-64 CPU backend.
+#
+# LLAMA_BUILD_UI=OFF + LLAMA_USE_PREBUILT_UI=OFF are mandatory here for the same
+# reason as the production image: this is a --depth 1 fetch, so there is no tag
+# history for the UI's git-describe build number and the build hard-fails
+# without them. (The original version of this file predated that fix.)
+#
+# LLAMA_BUILD_TESTS=ON so test-backend-ops exists. It is the only tool that
+# compares a backend's kernels against the CPU reference per-op, which is how
+# PR #204's turbo4 layout/centroid bugs were found and is the gate for the
+# TQ3_1S/TQ4_1S work. Note upstream Vulkan CI explicitly skips it
+# (`ctest -E test-backend-ops`, too slow on llvmpipe), so a real GPU is the only
+# place it ever runs. The explicit --target list keeps ON from building the
+# whole test suite.
 RUN cmake -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DGGML_NATIVE=OFF -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON \
-      -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF \
+      -DLLAMA_BUILD_TESTS=ON -DLLAMA_CURL=OFF \
+      -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
     && cmake --build build -j"$(nproc)" \
-         --target llama-bench llama-server llama-perplexity \
+         --target llama-bench llama-server llama-perplexity test-backend-ops \
     && mkdir -p /out \
     && find build -name '*.so*' -exec cp -P {} /out/ \; \
     && cp build/bin/llama-bench build/bin/llama-server build/bin/llama-perplexity /out/ \
+    && cp build/bin/test-backend-ops /out/ \
     && cp /tmp/TURBO_SHA /out/TURBO_SHA
 # #725-class guard (GPU-independent): force every relocation to resolve at
 # dlopen so a broken libggml-vulkan.so fails the build instead of shipping.
