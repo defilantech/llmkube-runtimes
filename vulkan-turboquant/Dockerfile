@@ -12,23 +12,26 @@
 # The fork tip is fetched live (the point is the just-synced EAGLE3/MTP/cohere2
 # support); the resolved commit is recorded at /app/TURBO_SHA in the image.
 
-# DEV LOOP (temporary): validating the #259 MUL_MAT_ID fix on gfx1151.
-# Revert to TheTom/llama-cpp-turboquant once merged.
-ARG TURBO_REPO=https://github.com/Defilan/llama.cpp.git
+ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
 # feature/turboquant-kv-cache tip. Our two Vulkan turbo4 fixes are merged
 # upstream (PR #204) -- the 66/68-byte block_turbo4_0 layout mismatch (drops the
 # removed rnorm field) and the stale Lloyd-Max centroid tables (sync to the
 # re-derived C reference), proven by test-backend-ops on gfx1151 (528/528 turbo4
 # FA FAIL -> 9509/9509 sweep PASS).
 #
-# Bumped to the 2026-08-03 tip to baseline TQ3_1S/TQ4_1S Vulkan weight-type work.
-# That tip carries DeepSeek-V4 arch support (PR #224/#254, CUDA+Metal kernels
-# only) and the TQ4_1S Vulkan shaders added in 2a716ac4 -- which are ORPHANED:
-# ggml-vulkan.cpp and vulkan-shaders-gen.cpp reference neither TQ3_1S nor
-# TQ4_1S, and the Vulkan SPIR-V build is driven by explicit string_to_spv()
-# calls with no globbing, so dequant_tq4_1s.comp / mul_mat_vec_tq4_1s.comp are
-# never compiled. This image is the harness for fixing that on real gfx1151.
-ARG TURBO_REF=ccb7ecc89b45ed3abbc26a858b22ec641a8452f0
+# Bumped to the merge of TheTom#259 (2026-08-04), which brings the TurboQuant
+# WEIGHT types up on Vulkan: TQ4_1S host wiring restored (it was lost in a
+# rebase -- the shaders from 2a716ac4 were present but never passed to glslc,
+# so every TQ4_1S MUL_MAT fell back to CPU) and TQ3_1S dequant + mul_mat_vec
+# kernels added. Validated on this node: full test-backend-ops 24496/24496,
+# and prefill on a TQ4_1S GGUF goes 1.19 -> 461 t/s because the matmuls are no
+# longer CPU-resident. This tip also carries DeepSeek-V4 arch support
+# (PR #224/#254), so a Config-I GGUF is now servable here.
+#
+# NOTE: MUL_MAT_ID is deliberately rejected for both TQ types (no
+# mul_mat_vec_id pipeline yet), so MoE decode on a TQ-quantized model falls
+# back to CPU. set_rows/cpy wiring is also still absent.
+ARG TURBO_REF=21eab71bc6c5f6c8194e6494006f25d979d8b6c4
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
