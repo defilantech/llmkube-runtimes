@@ -12,7 +12,9 @@
 # The fork tip is fetched live (the point is the just-synced EAGLE3/MTP/cohere2
 # support); the resolved commit is recorded at /app/TURBO_SHA in the image.
 
-ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
+# DEV LOOP (temporary): validating the #259 MUL_MAT_ID fix on gfx1151.
+# Revert to TheTom/llama-cpp-turboquant once merged.
+ARG TURBO_REPO=https://github.com/Defilan/llama.cpp.git
 # feature/turboquant-kv-cache tip. Our two Vulkan turbo4 fixes are merged
 # upstream (PR #204) -- the 66/68-byte block_turbo4_0 layout mismatch (drops the
 # removed rnorm field) and the stale Lloyd-Max centroid tables (sync to the
@@ -26,7 +28,7 @@ ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
 # TQ4_1S, and the Vulkan SPIR-V build is driven by explicit string_to_spv()
 # calls with no globbing, so dequant_tq4_1s.comp / mul_mat_vec_tq4_1s.comp are
 # never compiled. This image is the harness for fixing that on real gfx1151.
-ARG TURBO_REF=d0e2a8b64de4d42568932886fec638ef2a7e1d10
+ARG TURBO_REF=ccb7ecc89
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
