@@ -37,7 +37,7 @@ ARG TURBO_REPO=https://github.com/Defilan/llama.cpp.git
 # processing still has no TQ mul_mm_id and stages the whole expert tensor as
 # f16). Upstream ref to restore: 21eab71bc6c5f6c8194e6494006f25d979d8b6c4.
 # set_rows/cpy wiring is still absent either way.
-ARG TURBO_REF=353ac109e5cf66cb688a1ea97c7b782354e9be18
+ARG TURBO_REF=69ce0684b986bddd206ff9204aa8fb3543b45291
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
