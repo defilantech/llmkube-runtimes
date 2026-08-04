@@ -12,7 +12,10 @@
 # The fork tip is fetched live (the point is the just-synced EAGLE3/MTP/cohere2
 # support); the resolved commit is recorded at /app/TURBO_SHA in the image.
 
-ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
+# TEMPORARY: repointed at our fork to benchmark the mul_mat_vec_id work on
+# gfx1151 before proposing it upstream. RESTORE THE TheTom REPO/REF BELOW ONCE
+# THAT BENCHMARK IS DONE.
+ARG TURBO_REPO=https://github.com/Defilan/llama.cpp.git
 # feature/turboquant-kv-cache tip. Our two Vulkan turbo4 fixes are merged
 # upstream (PR #204) -- the 66/68-byte block_turbo4_0 layout mismatch (drops the
 # removed rnorm field) and the stale Lloyd-Max centroid tables (sync to the
@@ -28,10 +31,13 @@ ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
 # longer CPU-resident. This tip also carries DeepSeek-V4 arch support
 # (PR #224/#254), so a Config-I GGUF is now servable here.
 #
-# NOTE: MUL_MAT_ID is deliberately rejected for both TQ types (no
-# mul_mat_vec_id pipeline yet), so MoE decode on a TQ-quantized model falls
-# back to CPU. set_rows/cpy wiring is also still absent.
-ARG TURBO_REF=21eab71bc6c5f6c8194e6494006f25d979d8b6c4
+# TEMPORARY: vulkan/tq-mul-mat-vec-id on Defilan/llama.cpp. Adds
+# mul_mat_vec_id for TQ3_1S/TQ4_1S so MoE decode runs on the GPU, and replaces
+# the blanket MUL_MAT_ID reject with a maxStorageBufferRange size gate (prompt
+# processing still has no TQ mul_mm_id and stages the whole expert tensor as
+# f16). Upstream ref to restore: 21eab71bc6c5f6c8194e6494006f25d979d8b6c4.
+# set_rows/cpy wiring is still absent either way.
+ARG TURBO_REF=353ac109e5cf66cb688a1ea97c7b782354e9be18
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
