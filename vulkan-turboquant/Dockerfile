@@ -15,7 +15,7 @@
 # TEMPORARY: repointed at our fork to benchmark the mul_mat_vec_id work on
 # gfx1151 before proposing it upstream. RESTORE THE TheTom REPO/REF BELOW ONCE
 # THAT BENCHMARK IS DONE.
-ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
+ARG TURBO_REPO=https://github.com/Defilan/llama.cpp.git
 # feature/turboquant-kv-cache tip. Our two Vulkan turbo4 fixes are merged
 # upstream (PR #204) -- the 66/68-byte block_turbo4_0 layout mismatch (drops the
 # removed rnorm field) and the stale Lloyd-Max centroid tables (sync to the
@@ -37,7 +37,7 @@ ARG TURBO_REPO=https://github.com/TheTom/llama-cpp-turboquant.git
 # processing still has no TQ mul_mm_id and stages the whole expert tensor as
 # f16). Upstream ref to restore: 21eab71bc6c5f6c8194e6494006f25d979d8b6c4.
 # set_rows/cpy wiring is still absent either way.
-ARG TURBO_REF=5f5ef77adffaaff8675a03943befa992cc4f1076
+ARG TURBO_REF=160649054d289b25824f062e8746d1cc351deb4b
 # ubuntu:26.04 pinned by digest, same base as the production Vulkan image
 # (Mesa new enough for gfx1151 RADV).
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
