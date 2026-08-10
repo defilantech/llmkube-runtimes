@@ -17,8 +17,8 @@
 # upstream (2026-07-22), so this image can serve Laguna-family GGUFs. The build
 # asserts the laguna arch actually compiled in (below); the on-hardware Laguna
 # smoke on gfx1151 is the real proof that its op sequence runs on Vulkan.
-ARG LLAMACPP_REF=b10103
-ARG LLAMACPP_SHA=c588c4f47683e73ad2d69f50480bec6cc85fd0f7
+ARG LLAMACPP_REF=b10355
+ARG LLAMACPP_SHA=dd1ea524333b1e697489067d7a4c39c60d32beee
 # ubuntu:26.04 pinned by digest. 26.04's Mesa is new enough for gfx1151 (Strix
 # Halo) RADV; Debian stable / older Ubuntu ship Mesa too old to enumerate it.
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
@@ -67,6 +67,15 @@ RUN cmake -B build \
 # recursively over /out so it holds whether libllama is shared or static.
 RUN grep -rqa laguna /out/ \
     || { echo "ERROR: laguna arch not present in the built llama.cpp; LLAMACPP pin predates upstream laguna support"; exit 1; }
+# Muse Glimmer guard, same reasoning as laguna above. Meta's Muse Glimmer 30B
+# declares general.architecture "muse-glimmer", added upstream in 62bf73d2
+# (#26841) on 2026-08-10. The commit touches no backend kernels, only graph
+# construction and the mtmd vision path, so Vulkan needs no port: it needs a pin
+# at or after that commit. A pin that predates it builds cleanly and then fails
+# at load with an unknown-architecture error, which is expensive to diagnose on
+# a node rather than here.
+RUN grep -rqa muse-glimmer /out/ \
+    || { echo "ERROR: muse-glimmer arch not present in the built llama.cpp; LLAMACPP pin predates upstream Muse Glimmer support (62bf73d2)"; exit 1; }
 # #725 guard, GPU-independent. The upstream break was an undefined shader symbol
 # in libggml-vulkan.so that bound lazily, so it only crashed at shader-use time
 # on a real GPU. RTLD_NOW forces every relocation to resolve at dlopen, so a
