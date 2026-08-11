@@ -65,7 +65,18 @@ A DGX Spark can pull upstream's `ghcr.io/ggml-org/llama.cpp:server-cuda-*` today
 | Native cubins | `sm_86`, `sm_89`, `sm_120a` |
 | PTX | `sm_50`, `sm_61`, `sm_70`, `sm_75`, `sm_80`, `sm_90` |
 
-GB10 is `sm_121`, and the `a` in `sm_120a` means architecture-**specific**: a `120a` cubin does not load on `121`. So there is no native code for this GPU, and every kernel is JIT-compiled at startup from the `sm_90` (Hopper) PTX. That costs cold-start time on every pod start and gives up every Blackwell-tuned path in ggml.
+GB10 is `sm_121`, and the `a` in `sm_120a` means architecture-**specific**: a `120a` cubin does not load on `121`. So there is no native code for this GPU, and every kernel is JIT-compiled at startup from the `sm_90` (Hopper) PTX.
+
+**What that actually costs, measured on a GB10 (2026-08-11).** A controlled run isolated codegen from every other variable: one pod, one CUDA 13 toolchain, one llama.cpp commit (`b10355`), one GPU, one 16.8 GiB model, swapping only `libggml-cuda.so` between `121a-real` and `90-virtual`, with the CUDA JIT cache cleared before each run.
+
+| | native `sm_121a` | `sm_90` PTX (JIT) |
+| --- | --- | --- |
+| time to `model loaded` | 2.54 / 2.54 / 2.33 s | 20.14 / 21.21 / 20.12 s |
+| first-request prefill | 785 tok/s | 239 tok/s |
+| steady-state prefill | 787 tok/s | 782 tok/s |
+| steady-state decode | 31.4 tok/s | 31.4 tok/s |
+
+JIT costs about **18 s on every process start**, plus roughly 14 s more on the first request (CUDA loads modules lazily, so the first kernel launch pays again). It costs essentially **nothing in steady state**: +0.6% prefill and -0.1% decode against upstream's own image at a near-identical llama.cpp pin, both inside run-to-run noise. JIT'd SASS runs at full speed once compiled; what you pay for is compiling it, every time a pod starts.
 
 This is upstream's toolkit version, not an oversight. llama.cpp only appends `121a-real` to its default architecture list at CUDA >= 12.9 ([`ggml/src/ggml-cuda/CMakeLists.txt`](https://github.com/ggml-org/llama.cpp/blob/master/ggml/src/ggml-cuda/CMakeLists.txt)), and the upstream image is built on CUDA 12.8.x, so that branch never fires. Building on CUDA 13 with an explicit `-DCMAKE_CUDA_ARCHITECTURES=121a-real` fixes it.
 
