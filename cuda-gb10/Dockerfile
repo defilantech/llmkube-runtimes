@@ -14,9 +14,24 @@
 #
 # GB10 is sm_121. The "a" in sm_120a means architecture-SPECIFIC: a 120a cubin
 # does not load on 121. So there is no native code for this GPU at all, and
-# every kernel is JIT-compiled at startup from the sm_90 (Hopper) PTX. That
-# costs cold-start time on every pod start and gives up every Blackwell-tuned
-# code path in ggml.
+# every kernel is JIT-compiled at startup from the sm_90 (Hopper) PTX.
+#
+# MEASURED on a GB10, 2026-08-11, rather than assumed. A controlled run isolated
+# codegen from everything else: one pod, one CUDA 13 toolchain, one llama.cpp
+# commit (b10355), one GPU, one 16.8GB model, swapping only libggml-cuda.so
+# between 121a-real and 90-virtual, CUDA JIT cache cleared before every run:
+#
+#   native sm_121a :  2.54 / 2.54 / 2.33 s   to "model loaded"
+#   sm_90 PTX      : 20.14 / 21.21 / 20.12 s
+#
+# So JIT costs ~18s on every process start. It does NOT cost steady-state
+# throughput, and an earlier draft of this comment was wrong to imply it did:
+# against upstream's own image at a near-identical llama.cpp pin, prefill
+# differed by +0.6% and decode by -0.1%, both inside run-to-run noise. JIT'd
+# SASS runs at full speed once compiled. What you pay for is compiling it, on
+# every pod start. The first request pays again, because CUDA loads modules
+# lazily: first-request prefill measured 239 tok/s on JIT vs 785 native, roughly
+# 14s of extra latency on a 4700-token prompt.
 #
 # The cause is upstream's toolkit version, not an oversight: llama.cpp's default
 # arch list only appends 121a-real at CUDA >= 12.9 (ggml/src/ggml-cuda/
