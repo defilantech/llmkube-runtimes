@@ -6,6 +6,8 @@ Today this repo builds the **AMD/Vulkan** llama.cpp runtime as two images from o
 
 It also builds a **Laguna variant** of that Vulkan server runtime (`vulkan-laguna/`), for serving poolside Laguna models with working tool calling. See [Laguna variant](#laguna-variant) below.
 
+It also builds the **NVIDIA GB10** llama.cpp runtime (`cuda-gb10/`), for DGX Spark. Upstream's CUDA image runs on GB10 but JIT-compiles every kernel there; this one ships native `sm_121`. See [GB10 (DGX Spark) CUDA runtime](#gb10-dgx-spark-cuda-runtime) below.
+
 It also builds the **Foreman coder-agent** toolchain image (`coder/`): the foreman-agent binary plus the Go toolchain its in-workspace self-gate needs. Same discipline as the runtime images: pinned inputs, built here, owned. See [Coder agent image](#coder-agent-image) below.
 
 ## Why this repo exists
@@ -52,6 +54,27 @@ This variant builds from [`TheTom/llama-cpp-turboquant`](https://github.com/TheT
 
 The production `vulkan/` image stays pure upstream and is unaffected. The two pins move independently. Server image only; benchmark numbers come from the pure-upstream tools image so they stay comparable across models.
 
+## GB10 (DGX Spark) CUDA runtime
+
+`ghcr.io/defilantech/llmkube-llama-cuda-gb10` is the llama.cpp server runtime for NVIDIA GB10, built with native `sm_121` device code. `-tools` is the matching `llama-bench` / `llama-cli` image from the same build stage.
+
+A DGX Spark can pull upstream's `ghcr.io/ggml-org/llama.cpp:server-cuda-*` today: it has an arm64 manifest and it serves. It is also, on GB10, entirely JIT-compiled. Inspecting the shipped `libggml-cuda.so` from `server-cuda-b10068` with `cuobjdump` (2026-08-10):
+
+| Kind | Architectures |
+| --- | --- |
+| Native cubins | `sm_86`, `sm_89`, `sm_120a` |
+| PTX | `sm_50`, `sm_61`, `sm_70`, `sm_75`, `sm_80`, `sm_90` |
+
+GB10 is `sm_121`, and the `a` in `sm_120a` means architecture-**specific**: a `120a` cubin does not load on `121`. So there is no native code for this GPU, and every kernel is JIT-compiled at startup from the `sm_90` (Hopper) PTX. That costs cold-start time on every pod start and gives up every Blackwell-tuned path in ggml.
+
+This is upstream's toolkit version, not an oversight. llama.cpp only appends `121a-real` to its default architecture list at CUDA >= 12.9 ([`ggml/src/ggml-cuda/CMakeLists.txt`](https://github.com/ggml-org/llama.cpp/blob/master/ggml/src/ggml-cuda/CMakeLists.txt)), and the upstream image is built on CUDA 12.8.x, so that branch never fires. Building on CUDA 13 with an explicit `-DCMAKE_CUDA_ARCHITECTURES=121a-real` fixes it.
+
+**Scope is one GPU, deliberately.** No virtual/PTX target is compiled in, so the image cannot silently JIT itself onto other hardware; it fails loudly instead, which is the whole point. The rest of the fleet is unaffected: `sm_120` consumer Blackwell is already covered natively by upstream's `sm_120a` cubin, and is x86 anyway, so it could never pull this arm64 image.
+
+**The guard is the interesting part.** A wrong toolkit, a dropped `CMAKE_CUDA_ARCHITECTURES`, or an upstream change to the default list all produce a build that succeeds, an image that runs, and a GB10 quietly back on JIT. None of that is visible without looking at the fatbin, so the build stage looks at the fatbin: it fails unless `cuobjdump` finds native `sm_121`, and fails again if any PTX is present. Both checks are GPU-independent, so they run in CI. The shipped inventory is written to `/app/CUDA_ARCHS` as a receipt, because `cuobjdump` exists only in the CUDA devel image and anyone holding the final runtime image needs a way to verify what it contains.
+
+Built on GitHub's arm64 hosted runners (GB10 is aarch64 Grace, and a QEMU cross-build would turn a ~30 minute CUDA compile into an overnight job). It pins the same llama.cpp ref as `vulkan/`, so GB10 and Strix Halo numbers compare like vs like.
+
 ## Coder agent image
 
 `ghcr.io/defilantech/llmkube-foreman-agent-coder` — a Foreman agent that can run its own coder gate.
@@ -91,6 +114,17 @@ docker build -t llmkube-llama-vulkan-laguna:dev vulkan-laguna/
 ./scripts/tier1-gate.sh llmkube-llama-vulkan-laguna:dev
 ./scripts/laguna-gate.sh llmkube-llama-vulkan-laguna:dev
 ```
+
+```bash
+# GB10 / DGX Spark CUDA (arm64 only; build on an arm64 host)
+docker build -t llmkube-llama-cuda-gb10:dev cuda-gb10/
+./scripts/cuda-gate.sh llmkube-llama-cuda-gb10:dev
+
+docker build --target tools -t llmkube-llama-cuda-gb10-tools:dev cuda-gb10/
+./scripts/cuda-gate.sh llmkube-llama-cuda-gb10-tools:dev
+```
+
+`cuda-gate.sh` rather than `tier1-gate.sh`: a GPU-less host legitimately produces a CUDA backend load error (no device for `cuInit`), which `tier1-gate.sh` treats as failure. The CUDA gate allowlists exactly that one case, and additionally asserts the shipped image carries native `sm_121`.
 
 Bump the Laguna variant by editing `LLAMACPP_SHA` in `vulkan-laguna/Dockerfile`. It pins a bare commit SHA with no companion ref (the branch it tracks moves), and it is independent of the production pin.
 
