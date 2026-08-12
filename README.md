@@ -8,6 +8,8 @@ It also builds a **Laguna variant** of that Vulkan server runtime (`vulkan-lagun
 
 It also builds the **NVIDIA GB10** llama.cpp runtime (`cuda-gb10/`), for DGX Spark. Upstream's CUDA image runs on GB10 but JIT-compiles every kernel there; this one ships native `sm_121`. See [GB10 (DGX Spark) CUDA runtime](#gb10-dgx-spark-cuda-runtime) below.
 
+It also builds a **TurboQuant variant** of that GB10 runtime (`cuda-gb10-turbo/`), from the same fork the Laguna variant uses, for `TQ3_1S` / `TQ4_1S` weights on CUDA. See [GB10 TurboQuant variant](#gb10-turboquant-variant) below.
+
 It also builds the **Foreman coder-agent** toolchain image (`coder/`): the foreman-agent binary plus the Go toolchain its in-workspace self-gate needs. Same discipline as the runtime images: pinned inputs, built here, owned. See [Coder agent image](#coder-agent-image) below.
 
 ## Why this repo exists
@@ -88,6 +90,26 @@ Built on GitHub's arm64 hosted runners (GB10 is aarch64 Grace, and a QEMU cross-
 
 **Multi-Spark serving.** The image is built with `GGML_RPC=ON` and ships `ggml-rpc-server`, so one model can span two Sparks over the ConnectX-7 link: the remote host exposes its devices, the main process offloads layers onto them, and the model is bounded by the sum of both machines' memory rather than either one's. NVIDIA builds their Spark llama.cpp the same way. Enabling it changes nothing for single-node serving, which is why it is on by default here. Note upstream considers the RPC backend a proof of concept and insecure on untrusted networks: keep `ggml-rpc-server` on the point-to-point fabric, never on a routable interface.
 
+## GB10 TurboQuant variant
+
+`ghcr.io/defilantech/llmkube-llama-cuda-gb10-turbo` (`cuda-gb10-turbo/`) is the same GB10 runtime built from [`TheTom/llama-cpp-turboquant`](https://github.com/TheTom/llama-cpp-turboquant) branch `laguna/port` instead of upstream, for TurboQuant weight support on CUDA.
+
+| Format | Bytes per 32 weights | bits per weight |
+| --- | --- | --- |
+| `TQ3_1S` | 16 | 4.0 |
+| `TQ4_1S` | 20 | 5.0 |
+| `Q4_K_M` (for comparison) | ~19.4 | ~4.85 |
+
+Note what that table does and does not say. TurboQuant is a **quality-per-bit** format, not a compression one: `TQ4_1S` is slightly *larger* than `Q4_K_M`, and `TQ3_1S` is about 18% smaller. It buys fidelity at a given size, not the ability to fit a much bigger model.
+
+**Why a separate image rather than a swap.** The two exist to be compared: same GPU, same CUDA toolkit, same codegen, different llama.cpp. Their pins therefore move independently, unlike `cuda-gb10/` and `vulkan/` which are deliberately kept in lockstep. Keeping the upstream image untouched also means a fork regression cannot take the fleet's serving runtime with it.
+
+**The TurboQuant guard is the interesting part here**, and it exists because of how the Vulkan side of the same fork failed: `TQ4_1S` shader sources were present in the tree, looked complete on inspection, and were never compiled or registered. Reading source proves nothing, so the build interrogates the artifact instead. It fails unless `cuobjdump` finds TurboQuant kernels in the compiled device code, and fails separately if the TQ type names are missing from the ggml libraries (kernels without registered types means a TQ GGUF is rejected at load). The guard also distinguishes "the dump did not work" from "the dump worked and TQ is absent", so a tooling problem cannot masquerade as a code problem.
+
+It carries the same `GGML_RPC=ON` build and `ggml-rpc-server` as `cuda-gb10/`, so the two variants differ only in llama.cpp source, which is what makes them comparable.
+
+`laguna/port` is an actively developed branch rather than a tag, so the build fetches the pinned commit directly and verifies it. The weekly canary runs on a different day from `cuda-gb10`'s so the two never contend for the shared Actions cache, and it doubles as a watch on the fork: a rebase there that drops the TQ CUDA path turns into a build failure rather than a silently stock image.
+
 ## Coder agent image
 
 `ghcr.io/defilantech/llmkube-foreman-agent-coder` — a Foreman agent that can run its own coder gate.
@@ -135,6 +157,10 @@ docker build -t llmkube-llama-cuda-gb10:dev cuda-gb10/
 
 docker build --target tools -t llmkube-llama-cuda-gb10-tools:dev cuda-gb10/
 ./scripts/cuda-gate.sh llmkube-llama-cuda-gb10-tools:dev
+
+# GB10 TurboQuant variant (same gate; adds the TQ guards at build time)
+docker build -t llmkube-llama-cuda-gb10-turbo:dev cuda-gb10-turbo/
+./scripts/cuda-gate.sh llmkube-llama-cuda-gb10-turbo:dev
 ```
 
 `cuda-gate.sh` rather than `tier1-gate.sh`: a GPU-less host legitimately produces a CUDA backend load error (no device for `cuInit`), which `tier1-gate.sh` treats as failure. The CUDA gate allowlists exactly that one case, and additionally asserts the shipped image carries native `sm_121`.
