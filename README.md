@@ -86,6 +86,8 @@ This is upstream's toolkit version, not an oversight. llama.cpp only appends `12
 
 Built on GitHub's arm64 hosted runners (GB10 is aarch64 Grace, and a QEMU cross-build would turn a ~30 minute CUDA compile into an overnight job). It pins the same llama.cpp ref as `vulkan/`, so GB10 and Strix Halo numbers compare like vs like.
 
+**Multi-Spark serving.** The image is built with `GGML_RPC=ON` and ships `ggml-rpc-server`, so one model can span two Sparks over the ConnectX-7 link: the remote host exposes its devices, the main process offloads layers onto them, and the model is bounded by the sum of both machines' memory rather than either one's. NVIDIA builds their Spark llama.cpp the same way. Enabling it changes nothing for single-node serving, which is why it is on by default here. Note upstream considers the RPC backend a proof of concept and insecure on untrusted networks: keep `ggml-rpc-server` on the point-to-point fabric, never on a routable interface.
+
 ## Coder agent image
 
 `ghcr.io/defilantech/llmkube-foreman-agent-coder` — a Foreman agent that can run its own coder gate.

@@ -93,8 +93,26 @@ RUN git clone --depth 1 --branch "${LLAMACPP_REF}" https://github.com/ggml-org/l
 # by a git-describe build number, which a --depth 1 clone cannot produce; the
 # Vulkan and ROCm images carry the same two flags for the same reason. These
 # runtimes are consumed as inference backends over /v1/*, never via a browser.
+# GGML_RPC=ON builds the RPC backend and the rpc-server binary, which is how one
+# model spans two Sparks: ggml-rpc-server exposes a remote host's devices and the
+# main process offloads layers onto them, so the model is limited by the SUM of
+# both machines' memory rather than either one's. NVIDIA builds their Spark
+# llama.cpp the same way (nvidia/dgx-spark-playbooks, nvidia/llama-cpp).
+#
+# It is off in upstream's default build, and its absence is silent: a runtime
+# without it simply rejects --rpc, which reads as a bad flag rather than a
+# missing feature.
+#
+# Two things to be clear about, since neither is obvious:
+#   - Enabling it changes nothing for single-node serving. It adds a backend and
+#     a binary; llama-server behaves identically unless --rpc is passed.
+#   - Upstream calls the RPC backend a proof of concept and warns it is insecure
+#     ("never run the RPC server on an open network"). That is a statement about
+#     exposure, not correctness: on a dedicated point-to-point cable between two
+#     machines under the same owner it is a much smaller concern than on a shared
+#     network. Do not publish rpc-server on a routable interface.
 RUN cmake -B build \
-      -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DGGML_BACKEND_DL=ON \
+      -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DGGML_BACKEND_DL=ON -DGGML_RPC=ON \
       -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCH}" \
       -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF \
       -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
@@ -102,7 +120,25 @@ RUN cmake -B build \
     && mkdir -p /out /out-tools \
     && find build -name '*.so*' -exec cp -P {} /out/ \; \
     && cp build/bin/llama-server /out/ \
+    && cp build/bin/ggml-rpc-server /out/ \
     && cp build/bin/llama-bench build/bin/llama-cli /out-tools/
+
+# RPC GUARD. Same discipline as the codegen guard: the feature this build turned
+# on is asserted against the artifact, not assumed from the flag. A cmake option
+# that silently stops taking effect (renamed, moved behind another condition)
+# would otherwise ship an image whose only symptom is that --rpc is rejected at
+# runtime, on a node, during a test you thought was measuring something else.
+# The binary is `ggml-rpc-server` (tools/rpc/CMakeLists.txt sets that TARGET),
+# not `rpc-server`; the subdirectory is added only `if (GGML_RPC)`, so its
+# absence is exactly the signal we want to catch.
+RUN test -x /out/ggml-rpc-server \
+      || { echo "ERROR: ggml-rpc-server missing; GGML_RPC=ON did not take effect."; \
+           echo "       tools/CMakeLists.txt adds tools/rpc only under if(GGML_RPC),"; \
+           echo "       so this means the option stopped applying."; exit 1; }; \
+    ls /out/libggml-rpc.so >/dev/null 2>&1 \
+      && echo "NOTE: libggml-rpc.so present (dlopen-able RPC backend)" \
+      || echo "NOTE: no separate libggml-rpc.so (RPC linked into the core build)"; \
+    echo "PASS: ggml-rpc-server present"
 
 # CODEGEN GUARD. The whole point of this image, asserted rather than assumed.
 #
