@@ -84,24 +84,35 @@ ARG B12X_VERSION=1.3.0
 # The receipt is shipped in the image, in the same spirit as the sibling CUDA
 # image's /app/CUDA_ARCHS: a fact recorded at build time so anyone holding the
 # artifact can check it later without a rebuild.
-RUN mkdir -p /opt/llmkube \
- && { echo "### pip check (base, before any change)"; \
-      python3 -m pip check 2>&1 || true; \
-      echo "### versions (base, before any change)"; \
-      python3 - <<'PY' 2>&1 || true
+# A Dockerfile heredoc, NOT backslash continuations. Mixing the two is what
+# broke the previous attempt: a shell heredoc's terminator ends the physical
+# line, so the following `}` was read as a new Dockerfile instruction
+# ("unknown instruction: }"). Inside RUN <<'EOT' newlines survive intact, which
+# is also what lets the python program below keep its indentation.
+RUN <<'EOT'
+set -eu
+mkdir -p /opt/llmkube
+{
+  echo "### pip check (base, before any change)"
+  python3 -m pip check 2>&1 || true
+  echo "### versions (base, before any change)"
+  python3 -c '
 import importlib.metadata as m, importlib.util
 for pkg in ("b12x", "vllm", "torch", "nvidia-cutlass-dsl", "quack-kernels"):
     try:
         v = m.version(pkg)
     except Exception:
         v = "ABSENT-from-pip-metadata"
-    print(f"{pkg}={v}")
-# b12x may exist as files without pip metadata; report that separately.
+    print(pkg + "=" + v)
+# b12x may exist as files without pip metadata; report that separately, since
+# that distinction is exactly what the first two CI runs got wrong.
 spec = importlib.util.find_spec("b12x")
-print(f"b12x-importable-path={spec.origin if spec else 'NONE'}")
-PY
-    } > /opt/llmkube/base-receipt.txt; \
-    echo "--- base receipt ---"; cat /opt/llmkube/base-receipt.txt
+print("b12x-importable-path=" + (spec.origin if spec and spec.origin else "NONE"))
+' 2>&1 || true
+} > /opt/llmkube/base-receipt.txt
+echo "--- base receipt ---"
+cat /opt/llmkube/base-receipt.txt
+EOT
 
 # --no-deps so the upgrade cannot pull a different torch, cutlass-dsl or vllm
 # into an image whose CUDA stack is already correct for sm_121.
