@@ -74,12 +74,27 @@ ARG B12X_VERSION=1.3.0
 
 # Record what the BASE actually contains, before touching anything.
 #
-# This exists because reasoning about the base from the outside got it wrong
-# once already. PyPI dates said the 2026-08-23 base "must" ship b12x 1.2.6, and
-# the first CI run disproved it: the baseline pip check named only
-# quack-kernels, so whatever b12x the base has is not registered with pip
-# metadata that declares requirements. Guessing at the base is not a thing to
-# do twice -- so the build now writes down what it finds and the gate reads it.
+# This exists because reasoning about the base from the outside kept producing
+# confident, wrong answers. What the receipt actually reports (CI, 2026-08-29):
+#
+#     b12x=1.2.6                    vllm=0.1.dev20133+gb5f995e73.d20260823
+#     torch=2.13.0+cu130            nvidia-cutlass-dsl=4.7.0
+#     quack-kernels=0.6.4
+#     b12x-importable-path=/usr/local/lib/python3.12/dist-packages/b12x/__init__.py
+#
+# So the base DOES ship b12x 1.2.6, and the pre-install pip check named only
+# quack-kernels. Both are true at once, which is the interesting part: the
+# base's b12x has a readable version but its recorded metadata does NOT declare
+# the nvidia-cutlass-dsl pins that the PyPI wheel declares. pip therefore had
+# nothing to complain about until the stock wheel was installed over it.
+#
+# WHAT THAT IMPLIES, AND IT IS A REAL RISK FOR THE GPU TEST: the base's b12x is
+# most likely built from source with an adjusted dependency set rather than
+# installed from PyPI. If it also carries source changes, replacing it with the
+# stock 1.3.0 wheel drops them. That trade is still the right one -- 1.3.0 fixes
+# two defects that crash this exact model's W4A16 path under graph capture, and
+# a bind-mounted patch is unusable under a scheduler -- but it is a trade, not a
+# free upgrade, and the smoke test is where it gets checked.
 #
 # The receipt is shipped in the image, in the same spirit as the sibling CUDA
 # image's /app/CUDA_ARCHS: a fact recorded at build time so anyone holding the

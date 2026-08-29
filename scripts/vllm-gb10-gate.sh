@@ -161,4 +161,9 @@ echo "${out}"
 echo "PASS: vllm entrypoint present"
 
 echo "== verdict =="
-echo "PASS: GB10 vLLM NVFP4 image gated (b12x ${WANT_B12X}, W4A16 clean, deps coherent)"
+# Deliberately NOT "deps coherent" -- they are not. The cutlass-dsl mismatch is
+# allowlisted and stands. Say what was checked, so a green line cannot be read
+# as more than it is.
+echo "PASS: b12x ${WANT_B12X} shipped, W4A16 defects absent, no unexpected dep conflict."
+echo "      NOT verified here: that the kernels run. No GPU in CI; b12x declares"
+echo "      cutlass-dsl==4.6.2 against the image's 4.7.0. GB10 smoke test settles it."
