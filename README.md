@@ -10,6 +10,8 @@ It also builds the **NVIDIA GB10** llama.cpp runtime (`cuda-gb10/`), for DGX Spa
 
 It also builds a **TurboQuant variant** of that GB10 runtime (`cuda-gb10-turbo/`), from the same fork the Laguna variant uses, for `TQ3_1S` / `TQ4_1S` weights on CUDA. See [GB10 TurboQuant variant](#gb10-turboquant-variant) below.
 
+It also builds the **GB10 vLLM NVFP4** runtime (`cuda-gb10-vllm-nvfp4/`), the first non-llama.cpp image here, for serving NVFP4 MoE checkpoints with in-checkpoint MTP at high concurrency on a DGX Spark. See [GB10 vLLM NVFP4 runtime](#gb10-vllm-nvfp4-runtime) below.
+
 It also builds the **Foreman coder-agent** toolchain image (`coder/`): the foreman-agent binary plus the Go toolchain its in-workspace self-gate needs. Same discipline as the runtime images: pinned inputs, built here, owned. See [Coder agent image](#coder-agent-image) below.
 
 ## Why this repo exists
@@ -110,6 +112,27 @@ It carries the same `GGML_RPC=ON` build and `ggml-rpc-server` as `cuda-gb10/`, s
 
 `laguna/port` is an actively developed branch rather than a tag, so the build fetches the pinned commit directly and verifies it. The weekly canary runs on a different day from `cuda-gb10`'s so the two never contend for the shared Actions cache, and it doubles as a watch on the fork: a rebase there that drops the TQ CUDA path turns into a build failure rather than a silently stock image.
 
+## GB10 vLLM NVFP4 runtime
+
+`ghcr.io/defilantech/llmkube-vllm-cuda-gb10-nvfp4` (`cuda-gb10-vllm-nvfp4/`) serves NVFP4 MoE checkpoints on a DGX Spark with vLLM instead of llama.cpp.
+
+**Why a second engine.** llama.cpp is the right engine for single-stream serving and stays the default everywhere else in this repo. What it does not do is scale with concurrency, and a fleet of coder agents is an aggregate workload:
+
+| | llama.cpp `Q4_K_M` | vLLM NVFP4 + MTP |
+| --- | --- | --- |
+| single stream | ~97 tok/s | ~86 tok/s |
+| 24 concurrent streams | does not scale | ~440 tok/s aggregate |
+
+The single-stream column is why this does not replace `cuda-gb10/`; the second column is why it exists.
+
+**This image is not built from source**, which makes it the exception in this repo. [`eugr/spark-vllm-docker`](https://github.com/eugr/spark-vllm-docker) is the community's shared GB10 vLLM stack, and rebuilding it would buy a vLLM pin, a CUDA 13 aarch64 toolchain and a multi-hour build in exchange for nothing. The base is pinned **by digest** (`latest` there moves nightly) and this repo adds exactly one layer.
+
+**That layer is the point.** `b12x` is the GB10-native MoE backend. Versions before 1.3.0 carry two defects that crash startup once MTP and CUDA graphs are both on: an undefined `metadata_row` in the W4A16 output-drain path, and a route-packing workspace allocated per call, which is illegal under graph capture. The published recipes for these models work around both by bind-mounting patched files over the container's `site-packages` — fine for `docker run` on one box, unusable under a scheduler that can place a pod on a node without those files. b12x 1.3.0 fixes both upstream, so this image pins it and carries no patches.
+
+The base is `nightly-20260823`; the newest b12x on that date was 1.2.6, so the upgrade is doing real work. It is installed `--no-deps`, which is safe for a checked reason rather than by habit: b12x's requirement set is byte-identical across 1.2.6, 1.2.8 and 1.3.0, so nothing needs resolving and torch/vLLM cannot be swapped underneath a CUDA stack that is already correct for `sm_121`. The gate runs `pip check` so that a future bump which *does* add a dependency fails the build rather than a GB10.
+
+arm64 only, and here that is a hard constraint rather than a preference: the base publishes no amd64 manifest at all.
+
 ## Coder agent image
 
 `ghcr.io/defilantech/llmkube-foreman-agent-coder` — a Foreman agent that can run its own coder gate.
@@ -162,6 +185,14 @@ docker build --target tools -t llmkube-llama-cuda-gb10-tools:dev cuda-gb10/
 docker build -t llmkube-llama-cuda-gb10-turbo:dev cuda-gb10-turbo/
 ./scripts/cuda-gate.sh llmkube-llama-cuda-gb10-turbo:dev
 ```
+
+```bash
+# GB10 vLLM NVFP4 (arm64 only; pulls a large third-party base)
+docker build -t llmkube-vllm-cuda-gb10-nvfp4:dev cuda-gb10-vllm-nvfp4/
+./scripts/vllm-gb10-gate.sh llmkube-vllm-cuda-gb10-nvfp4:dev 1.3.0
+```
+
+`vllm-gb10-gate.sh` takes the expected b12x version as its second argument, and nothing in it imports `b12x` or `vllm`: both initialize CUDA on import, so on a GPU-less host they would fail for reasons unrelated to the image. It checks files and metadata only.
 
 `cuda-gate.sh` rather than `tier1-gate.sh`: a GPU-less host legitimately produces a CUDA backend load error (no device for `cuInit`), which `tier1-gate.sh` treats as failure. The CUDA gate allowlists exactly that one case, and additionally asserts the shipped image carries native `sm_121`.
 
