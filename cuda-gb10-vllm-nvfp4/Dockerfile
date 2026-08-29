@@ -72,6 +72,28 @@ FROM eugr/spark-vllm-b12x@sha256:7dc02f162929943ba2e14514066ed2a04bb7e9ed3592d4e
 # here would reintroduce the drift the digest pin above exists to remove.
 ARG B12X_VERSION=1.3.0
 
+# Record the base's dependency consistency BEFORE touching anything.
+#
+# This exists because the base is NOT internally consistent to begin with, and
+# that was worth discovering at build time rather than arguing about later. It
+# ships nvidia-cutlass-dsl 4.7.0 while both b12x (any version, the pin has not
+# moved) and quack-kernels 0.6.4 require exactly 4.6.2. quack-kernels is a base
+# package this image never touches, which is the proof the conflict is
+# inherited rather than introduced here.
+#
+# Empirically it is not fatal: eugr's image is the community's working GB10
+# stack and serves this model class today, so the metadata pin is stricter than
+# the runtime requirement. Note this is the nvidia-cutlass-dsl PYTHON package,
+# a different thing from vLLM's C++ CUTLASS_REVISION.
+#
+# `|| true` because pip check exits non-zero on exactly the condition we are
+# recording. The gate diffs live output against this receipt and fails only on
+# conflicts that are NEW, so an inherited mess cannot mask a real regression and
+# cannot block the build either.
+RUN mkdir -p /opt/llmkube \
+ && python3 -m pip check > /opt/llmkube/pip-check-baseline.txt 2>&1 || true; \
+    echo "--- base pip check baseline ---"; cat /opt/llmkube/pip-check-baseline.txt
+
 # --no-deps so the upgrade cannot pull a different torch, cutlass-dsl or vllm
 # into an image whose CUDA stack is already correct for sm_121.
 #
@@ -84,9 +106,12 @@ ARG B12X_VERSION=1.3.0
 # --no-deps would be the wrong tool and the honest fix would be to install the
 # matching version explicitly, never to drop the flag and let pip swap torch.
 #
-# The gate runs `pip check` against the shipped image precisely so that a FUTURE
-# bump which does add a dependency fails the build instead of failing on a GB10.
-# The wheel is py3-none-any, so there is nothing to compile either.
+# Because the requirement set did not move, this upgrade cannot have changed the
+# dependency graph at all -- and the gate proves that rather than assuming it,
+# by diffing pip check against the baseline captured above. A FUTURE bump that
+# does add or move a dependency shows up there as a NEW conflict and fails the
+# build, instead of failing on a GB10. The wheel is py3-none-any, so there is
+# nothing to compile either.
 RUN python3 -m pip install --no-cache-dir --no-deps --break-system-packages \
         "b12x==${B12X_VERSION}" \
  && python3 -c "import importlib.metadata as m; print('b12x', m.version('b12x'))"

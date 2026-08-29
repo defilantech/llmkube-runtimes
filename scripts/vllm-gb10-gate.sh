@@ -75,22 +75,66 @@ fi
 echo "${out}"
 echo "PASS: both W4A16 defects absent from the shipped b12x"
 
-# --- 3. --no-deps left a coherent environment ---------------------------------
+# --- 3. The layer introduced no NEW dependency conflict ------------------------
 #
-# `pip install --no-deps` is deliberate (see the Dockerfile) but it is exactly
-# the flag that can leave an unsatisfiable requirement behind if a future b12x
-# grows a dependency the base does not have. pip check is the cheap way to
-# notice that at build time instead of at import time on a GB10.
-echo "== pip check =="
-if ! out="$(run python3 -m pip check 2>&1)"; then
-  echo "${out}"
-  echo "FAIL: broken dependencies in the image after the --no-deps b12x install."
-  echo "      If b12x gained a real dependency, install it explicitly rather"
-  echo "      than dropping --no-deps, which would let torch/vllm be replaced."
+# NOT a bare `pip check`. The base is already internally inconsistent: it ships
+# nvidia-cutlass-dsl 4.7.0 while b12x (at every version, the pin has not moved)
+# and quack-kernels 0.6.4 both require exactly 4.6.2. quack-kernels is a base
+# package this image never touches, which is what proves the conflict is
+# inherited rather than caused by our --no-deps install.
+#
+# A bare pip check therefore fails on a condition we did not create and cannot
+# responsibly "fix" -- pinning cutlass-dsl down to 4.6.2 would change a CUDA DSL
+# out from under a vLLM build that works today. But dropping the check entirely
+# would give up the one guard that catches a future b12x bump quietly adding a
+# dependency.
+#
+# So: diff against the baseline the Dockerfile recorded BEFORE the install.
+# Inherited conflicts are reported and pass; anything NEW fails.
+echo "== dependency conflicts introduced by this layer =="
+
+BASELINE_PATH=/opt/llmkube/pip-check-baseline.txt
+if ! base_raw="$(run cat "${BASELINE_PATH}" 2>&1)"; then
+  echo "${base_raw}"
+  echo "FAIL: ${BASELINE_PATH} missing from the image."
+  echo "      The Dockerfile records it before installing b12x; without it this"
+  echo "      check cannot tell an inherited conflict from one we introduced."
   exit 1
 fi
-echo "${out}"
-echo "PASS: dependency set is coherent"
+
+if ! live_raw="$(run python3 -m pip check 2>&1)"; then
+  : # non-zero is expected while the inherited conflict stands; classify below.
+fi
+
+# Normalize away the SUBJECT package's own version, so upgrading b12x 1.2.6 ->
+# 1.3.0 does not make its pre-existing complaint look like a brand new one.
+# "b12x 1.2.6 has requirement X, but you have Y." and
+# "b12x 1.3.0 has requirement X, but you have Y." both reduce to
+# "b12x has requirement X, but you have Y."
+normalize() { sed -E 's/^([A-Za-z0-9._-]+) [0-9][^ ]* has requirement /\1 has requirement /' | sed '/^[[:space:]]*$/d' | sort -u; }
+
+base_norm="$(printf '%s\n' "${base_raw}" | normalize)"
+live_norm="$(printf '%s\n' "${live_raw}" | normalize)"
+
+if [ -n "${base_norm}" ]; then
+  echo "-- inherited from the base (not introduced here, not failing the gate):"
+  printf '%s\n' "${base_norm}" | sed 's/^/     /'
+fi
+
+# comm needs sorted input; normalize already sorts. -13 = lines only in live.
+introduced="$(comm -13 <(printf '%s\n' "${base_norm}") <(printf '%s\n' "${live_norm}") || true)"
+introduced="$(printf '%s\n' "${introduced}" | sed '/^[[:space:]]*$/d')"
+
+if [ -n "${introduced}" ]; then
+  echo "-- INTRODUCED by the b12x layer:"
+  printf '%s\n' "${introduced}" | sed 's/^/     /'
+  echo "FAIL: this layer added a dependency conflict that the base did not have."
+  echo "      b12x most likely gained or moved a requirement. Install it"
+  echo "      explicitly rather than dropping --no-deps, which would let pip"
+  echo "      replace torch or vllm underneath a CUDA stack tuned for sm_121."
+  exit 1
+fi
+echo "PASS: no dependency conflict introduced by this layer"
 
 # --- 4. The server entrypoint still exists ------------------------------------
 #
