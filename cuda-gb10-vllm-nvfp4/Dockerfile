@@ -72,27 +72,36 @@ FROM eugr/spark-vllm-b12x@sha256:7dc02f162929943ba2e14514066ed2a04bb7e9ed3592d4e
 # here would reintroduce the drift the digest pin above exists to remove.
 ARG B12X_VERSION=1.3.0
 
-# Record the base's dependency consistency BEFORE touching anything.
+# Record what the BASE actually contains, before touching anything.
 #
-# This exists because the base is NOT internally consistent to begin with, and
-# that was worth discovering at build time rather than arguing about later. It
-# ships nvidia-cutlass-dsl 4.7.0 while both b12x (any version, the pin has not
-# moved) and quack-kernels 0.6.4 require exactly 4.6.2. quack-kernels is a base
-# package this image never touches, which is the proof the conflict is
-# inherited rather than introduced here.
+# This exists because reasoning about the base from the outside got it wrong
+# once already. PyPI dates said the 2026-08-23 base "must" ship b12x 1.2.6, and
+# the first CI run disproved it: the baseline pip check named only
+# quack-kernels, so whatever b12x the base has is not registered with pip
+# metadata that declares requirements. Guessing at the base is not a thing to
+# do twice -- so the build now writes down what it finds and the gate reads it.
 #
-# Empirically it is not fatal: eugr's image is the community's working GB10
-# stack and serves this model class today, so the metadata pin is stricter than
-# the runtime requirement. Note this is the nvidia-cutlass-dsl PYTHON package,
-# a different thing from vLLM's C++ CUTLASS_REVISION.
-#
-# `|| true` because pip check exits non-zero on exactly the condition we are
-# recording. The gate diffs live output against this receipt and fails only on
-# conflicts that are NEW, so an inherited mess cannot mask a real regression and
-# cannot block the build either.
+# The receipt is shipped in the image, in the same spirit as the sibling CUDA
+# image's /app/CUDA_ARCHS: a fact recorded at build time so anyone holding the
+# artifact can check it later without a rebuild.
 RUN mkdir -p /opt/llmkube \
- && python3 -m pip check > /opt/llmkube/pip-check-baseline.txt 2>&1 || true; \
-    echo "--- base pip check baseline ---"; cat /opt/llmkube/pip-check-baseline.txt
+ && { echo "### pip check (base, before any change)"; \
+      python3 -m pip check 2>&1 || true; \
+      echo "### versions (base, before any change)"; \
+      python3 - <<'PY' 2>&1 || true
+import importlib.metadata as m, importlib.util
+for pkg in ("b12x", "vllm", "torch", "nvidia-cutlass-dsl", "quack-kernels"):
+    try:
+        v = m.version(pkg)
+    except Exception:
+        v = "ABSENT-from-pip-metadata"
+    print(f"{pkg}={v}")
+# b12x may exist as files without pip metadata; report that separately.
+spec = importlib.util.find_spec("b12x")
+print(f"b12x-importable-path={spec.origin if spec else 'NONE'}")
+PY
+    } > /opt/llmkube/base-receipt.txt; \
+    echo "--- base receipt ---"; cat /opt/llmkube/base-receipt.txt
 
 # --no-deps so the upgrade cannot pull a different torch, cutlass-dsl or vllm
 # into an image whose CUDA stack is already correct for sm_121.
@@ -101,10 +110,17 @@ RUN mkdir -p /opt/llmkube \
 # b12x's requirement set is BYTE-IDENTICAL across 1.2.6, 1.2.8 and 1.3.0 (same
 # torch>=2.12.0, the same exact nvidia-cutlass-dsl==4.6.2 and its four libs
 # packages, same apache-tvm-ffi range, same transformers/safetensors floors).
-# The upgrade therefore needs nothing resolved -- there is no new dependency to
-# skip and no changed pin to violate. Had 1.3.0 moved the cutlass-dsl pin,
-# --no-deps would be the wrong tool and the honest fix would be to install the
-# matching version explicitly, never to drop the flag and let pip swap torch.
+# So no b12x version in play needs anything the others do not.
+#
+# KNOWN, UNRESOLVED, AND DELIBERATE: the image carries nvidia-cutlass-dsl 4.7.0
+# while b12x pins ==4.6.2. This layer does not cause that and does not fix it.
+# The base ships 4.7.0 with quack-kernels 0.6.4 ALSO asking for 4.6.2, so the
+# base maintainer chose 4.7.0 over two packages' pins; overriding that from here
+# would swap a CUDA DSL underneath a working vLLM build to satisfy metadata
+# rather than an observed failure. Whether b12x 1.3.0's W4A16 kernels actually
+# work against 4.7.0 is a GPU question that CI cannot answer -- it is exactly
+# what the out-of-band GB10 smoke test is for. Do not "resolve" this by pinning
+# cutlass-dsl down without measuring first.
 #
 # Because the requirement set did not move, this upgrade cannot have changed the
 # dependency graph at all -- and the gate proves that rather than assuming it,

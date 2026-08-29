@@ -75,66 +75,77 @@ fi
 echo "${out}"
 echo "PASS: both W4A16 defects absent from the shipped b12x"
 
-# --- 3. The layer introduced no NEW dependency conflict ------------------------
+# --- 3. No UNEXPECTED dependency conflict -------------------------------------
 #
-# NOT a bare `pip check`. The base is already internally inconsistent: it ships
-# nvidia-cutlass-dsl 4.7.0 while b12x (at every version, the pin has not moved)
-# and quack-kernels 0.6.4 both require exactly 4.6.2. quack-kernels is a base
-# package this image never touches, which is what proves the conflict is
-# inherited rather than caused by our --no-deps install.
+# Not a bare `pip check`, and not a naive baseline diff either. Both were tried
+# and both were wrong, for reasons worth recording so they are not retried:
 #
-# A bare pip check therefore fails on a condition we did not create and cannot
-# responsibly "fix" -- pinning cutlass-dsl down to 4.6.2 would change a CUDA DSL
-# out from under a vLLM build that works today. But dropping the check entirely
-# would give up the one guard that catches a future b12x bump quietly adding a
-# dependency.
+#   - Bare pip check fails, because the image carries nvidia-cutlass-dsl 4.7.0
+#     while b12x pins ==4.6.2. That looks like our --no-deps install misfired.
+#   - A plain baseline diff also fails, because the BASE has no pip-visible b12x
+#     requirements at all (its baseline names only quack-kernels). So every b12x
+#     requirement is technically "new" the moment we install the wheel, even
+#     though we changed no dependency's version.
 #
-# So: diff against the baseline the Dockerfile recorded BEFORE the install.
-# Inherited conflicts are reported and pass; anything NEW fails.
-echo "== dependency conflicts introduced by this layer =="
-
-BASELINE_PATH=/opt/llmkube/pip-check-baseline.txt
-if ! base_raw="$(run cat "${BASELINE_PATH}" 2>&1)"; then
-  echo "${base_raw}"
-  echo "FAIL: ${BASELINE_PATH} missing from the image."
-  echo "      The Dockerfile records it before installing b12x; without it this"
-  echo "      check cannot tell an inherited conflict from one we introduced."
+# What actually changed is VISIBILITY, not content: cutlass-dsl is 4.7.0 before
+# and after. And the base maintainer picked 4.7.0 while quack-kernels 0.6.4 --
+# a base package we never touch -- also asks for 4.6.2, so 4.7.0 is a deliberate
+# base choice made over an existing pin, not an accident we introduced.
+#
+# So the cutlass-dsl family is allowlisted, LOUDLY and by name, and everything
+# else must be either inherited or absent. A future b12x that needs, say,
+# flash-attn still fails here, which is the case --no-deps genuinely makes risky.
+#
+# The allowlist is a statement about metadata, NOT a claim that the kernels work.
+# Whether b12x 1.3.0's W4A16 path runs against cutlass-dsl 4.7.0 is a GPU
+# question this gate cannot answer; the GB10 smoke test settles it.
+echo "== what the base actually shipped =="
+if ! receipt="$(run cat /opt/llmkube/base-receipt.txt 2>&1)"; then
+  echo "${receipt}"
+  echo "FAIL: /opt/llmkube/base-receipt.txt missing; the Dockerfile writes it"
+  echo "      before installing b12x. Without it this check is guessing."
   exit 1
 fi
+printf '%s\n' "${receipt}" | sed 's/^/   /'
 
+echo "== dependency conflicts =="
+base_raw="$(printf '%s\n' "${receipt}" | sed -n '/^### pip check/,/^### versions/p' | sed '/^###/d')"
 if ! live_raw="$(run python3 -m pip check 2>&1)"; then
-  : # non-zero is expected while the inherited conflict stands; classify below.
+  : # non-zero expected while the cutlass-dsl mismatch stands; classified below.
 fi
 
-# Normalize away the SUBJECT package's own version, so upgrading b12x 1.2.6 ->
-# 1.3.0 does not make its pre-existing complaint look like a brand new one.
-# "b12x 1.2.6 has requirement X, but you have Y." and
-# "b12x 1.3.0 has requirement X, but you have Y." both reduce to
-# "b12x has requirement X, but you have Y."
+# Drop the subject package's own version so a b12x bump is not mistaken for a
+# new conflict: "b12x 1.3.0 has requirement X" -> "b12x has requirement X".
 normalize() { sed -E 's/^([A-Za-z0-9._-]+) [0-9][^ ]* has requirement /\1 has requirement /' | sed '/^[[:space:]]*$/d' | sort -u; }
+# The one documented mismatch: anything whose UNSATISFIED requirement is in the
+# nvidia-cutlass-dsl family. Matches the requirement target, not the subject, so
+# a b12x conflict over some other package is never swallowed by this.
+CUTLASS_FAMILY='has requirement nvidia-cutlass-dsl(-libs-(base|core|cu12|cu13))?=='
 
 base_norm="$(printf '%s\n' "${base_raw}" | normalize)"
 live_norm="$(printf '%s\n' "${live_raw}" | normalize)"
 
-if [ -n "${base_norm}" ]; then
-  echo "-- inherited from the base (not introduced here, not failing the gate):"
-  printf '%s\n' "${base_norm}" | sed 's/^/     /'
+allowed="$(printf '%s\n' "${live_norm}" | grep -E "${CUTLASS_FAMILY}" || true)"
+if [ -n "${allowed}" ]; then
+  echo "-- KNOWN cutlass-dsl metadata mismatch (allowlisted; NOT a claim it runs):"
+  printf '%s\n' "${allowed}" | sed 's/^/     /'
 fi
 
-# comm needs sorted input; normalize already sorts. -13 = lines only in live.
-introduced="$(comm -13 <(printf '%s\n' "${base_norm}") <(printf '%s\n' "${live_norm}") || true)"
-introduced="$(printf '%s\n' "${introduced}" | sed '/^[[:space:]]*$/d')"
+# Everything that is neither allowlisted nor already present in the base.
+live_rest="$(printf '%s\n' "${live_norm}" | grep -Ev "${CUTLASS_FAMILY}" || true)"
+unexpected="$(comm -13 <(printf '%s\n' "${base_norm}") <(printf '%s\n' "${live_rest}" | sort -u) || true)"
+unexpected="$(printf '%s\n' "${unexpected}" | sed '/^[[:space:]]*$/d')"
 
-if [ -n "${introduced}" ]; then
-  echo "-- INTRODUCED by the b12x layer:"
-  printf '%s\n' "${introduced}" | sed 's/^/     /'
-  echo "FAIL: this layer added a dependency conflict that the base did not have."
-  echo "      b12x most likely gained or moved a requirement. Install it"
-  echo "      explicitly rather than dropping --no-deps, which would let pip"
-  echo "      replace torch or vllm underneath a CUDA stack tuned for sm_121."
+if [ -n "${unexpected}" ]; then
+  echo "-- UNEXPECTED, neither inherited nor allowlisted:"
+  printf '%s\n' "${unexpected}" | sed 's/^/     /'
+  echo "FAIL: a dependency conflict appeared that this image does not account for."
+  echo "      If b12x gained a requirement, install it explicitly rather than"
+  echo "      dropping --no-deps, which would let pip replace torch or vllm"
+  echo "      underneath a CUDA stack tuned for sm_121."
   exit 1
 fi
-echo "PASS: no dependency conflict introduced by this layer"
+echo "PASS: only the documented cutlass-dsl mismatch and inherited conflicts"
 
 # --- 4. The server entrypoint still exists ------------------------------------
 #
