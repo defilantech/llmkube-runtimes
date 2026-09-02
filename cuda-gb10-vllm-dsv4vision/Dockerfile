@@ -59,11 +59,14 @@ RUN set -e; \
     test -f "${FI_AOT}" || { echo "ERROR: AOT artifact not at ${FI_AOT}; base layout changed, re-verify JitSpec.is_aot"; exit 1; }; \
     rm -f "${FI_AOT}"; \
     python3 - <<'PY'
+# JitSpec.is_aot is a path test (FLASHINFER_AOT_DIR/<name>/<name>.so). Check exactly that, without
+# instantiating the module generator: on a GPU-less builder that generator probes for a CUDA
+# architecture and raises "No supported CUDA architectures found for major versions [12]".
 import flashinfer, os
-from flashinfer.jit.mla import gen_sparse_mla_sm120_module
-spec = gen_sparse_mla_sm120_module()
-assert not spec.is_aot, "sparse_mla_sm120 still resolves to an AOT artifact"
-print("PASS: sparse_mla_sm120 will JIT from patched source; flashinfer", flashinfer.__version__)
+from flashinfer.jit.env import FLASHINFER_AOT_DIR
+aot = os.path.join(str(FLASHINFER_AOT_DIR), "sparse_mla_sm120", "sparse_mla_sm120.so")
+assert not os.path.exists(aot), f"sparse_mla_sm120 still resolves to an AOT artifact at {aot}"
+print("PASS: no AOT artifact at", aot, "; sparse_mla_sm120 will JIT from patched source; flashinfer", flashinfer.__version__)
 PY
 
 # Optional, deliberately NOT done here: pre-building the module at image build

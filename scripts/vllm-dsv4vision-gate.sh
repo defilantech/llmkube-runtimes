@@ -37,9 +37,10 @@ if run test -e "${AOT}" 2>/dev/null; then
 fi
 echo "PASS: no AOT sparse_mla_sm120 artifact"
 
-echo "== loader agrees (is_aot false) and nvcc is present for the JIT =="
-if ! out="$(run python3 -c 'from flashinfer.jit.mla import gen_sparse_mla_sm120_module as g; s=g(); print("is_aot", s.is_aot); import sys; sys.exit(1 if s.is_aot else 0)' 2>&1)"; then
-  echo "${out}"; echo "FAIL: JitSpec still resolves to an AOT artifact"; exit 1
+echo "== loader agrees (AOT path absent under FLASHINFER_AOT_DIR) and nvcc is present for the JIT =="
+# Path test only; the module generator probes for a CUDA arch and raises on a GPU-less runner.
+if ! out="$(run python3 -c 'import os,sys; from flashinfer.jit.env import FLASHINFER_AOT_DIR; p=os.path.join(str(FLASHINFER_AOT_DIR),"sparse_mla_sm120","sparse_mla_sm120.so"); print("aot_path", p, "exists", os.path.exists(p)); sys.exit(1 if os.path.exists(p) else 0)' 2>&1)"; then
+  echo "${out}"; echo "FAIL: the loader would still resolve sparse_mla_sm120 to an AOT artifact"; exit 1
 fi
 echo "${out}"
 if ! run /usr/local/cuda/bin/nvcc --version >/dev/null 2>&1; then
