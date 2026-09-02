@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# Tier-1 gate for cuda-gb10-vllm-dsv4vision (cheap, no GPU required).
+#
+# The image exists for exactly two facts, so the gate asserts exactly those two
+# on the SHIPPED image rather than trusting the Dockerfile's own RUN guards:
+#   1. FlashInfer's sm120 sparse-MLA prefill dispatcher carries the DeepSeek-V4
+#      Vision arms (flashinfer#4850's 512/512 page-64 arm and the compress-128
+#      512 page-2 arm), for both 32 and 64 query heads.
+#   2. No prebuilt AOT artifact shadows that source: FlashInfer JIT-compiles a
+#      module only when flashinfer_jit_cache/jit_cache/<name>/<name>.so is absent.
+# Both are string/path checks; nothing here needs CUDA. GPU serving is Tier-2.
+set -euo pipefail
+
+IMAGE="${1:?usage: vllm-dsv4vision-gate.sh <image-ref>}"
+run() { docker run --rm --entrypoint "$1" "${IMAGE}" "${@:2}"; }
+
+CU=/usr/local/lib/python3.12/dist-packages/flashinfer/data/csrc/sparse_mla_sm120_prefill.cu
+AOT=/usr/local/lib/python3.12/dist-packages/flashinfer_jit_cache/jit_cache/sparse_mla_sm120/sparse_mla_sm120.so
+
+echo "== dispatcher arms in the shipped source =="
+if ! src="$(run cat "${CU}" 2>&1)"; then
+  echo "${src}"; echo "FAIL: ${CU} missing; the FlashInfer layout changed"; exit 1
+fi
+n64="$(printf '%s\n' "${src}" | grep -c 'topk == 512 && topk_extra == 512 && extra_page_block_size == 64' || true)"
+n2="$(printf '%s\n' "${src}" | grep -c 'topk == 512 && extra_page_block_size == 2' || true)"
+echo "compress-4 arm (PR #4850) occurrences: ${n64}  (want 2: NH 32 and 64)"
+echo "compress-128 arm occurrences:          ${n2}   (want 2: NH 32 and 64)"
+if [ "${n64}" -lt 2 ] || [ "${n2}" -lt 2 ]; then
+  echo "FAIL: the Vision prefill arms are not in the shipped dispatcher"; exit 1
+fi
+echo "PASS: both Vision dual-cache arms present"
+
+echo "== AOT artifact must be absent so the source is compiled =="
+if run test -e "${AOT}" 2>/dev/null; then
+  echo "FAIL: ${AOT} still exists; FlashInfer would load it and ignore the patched source"; exit 1
+fi
+echo "PASS: no AOT sparse_mla_sm120 artifact"
+
+echo "== loader agrees (is_aot false) and nvcc is present for the JIT =="
+if ! out="$(run python3 -c 'from flashinfer.jit.mla import gen_sparse_mla_sm120_module as g; s=g(); print("is_aot", s.is_aot); import sys; sys.exit(1 if s.is_aot else 0)' 2>&1)"; then
+  echo "${out}"; echo "FAIL: JitSpec still resolves to an AOT artifact"; exit 1
+fi
+echo "${out}"
+if ! run /usr/local/cuda/bin/nvcc --version >/dev/null 2>&1; then
+  echo "FAIL: nvcc missing; the JIT build at first start would fail"; exit 1
+fi
+echo "PASS: loader will JIT from source; nvcc available"
