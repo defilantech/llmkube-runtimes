@@ -10,7 +10,7 @@ It also builds the **NVIDIA GB10** llama.cpp runtime (`cuda-gb10/`), for DGX Spa
 
 It also builds a **TurboQuant variant** of that GB10 runtime (`cuda-gb10-turbo/`), from the same fork the Laguna variant uses, for `TQ3_1S` / `TQ4_1S` weights on CUDA. See [GB10 TurboQuant variant](#gb10-turboquant-variant) below.
 
-It also builds the **GB10 vLLM NVFP4** runtime (`cuda-gb10-vllm-nvfp4/`), the first non-llama.cpp image here, for serving NVFP4 MoE checkpoints with in-checkpoint MTP at high concurrency on a DGX Spark. See [GB10 vLLM NVFP4 runtime](#gb10-vllm-nvfp4-runtime) below.
+It also builds the **GB10 vLLM NVFP4** runtime (`cuda-gb10-vllm-nvfp4/`), the first non-llama.cpp image here, for serving NVFP4 MoE checkpoints with in-checkpoint MTP at high concurrency on a DGX Spark. See [GB10 vLLM NVFP4 runtime](#gb10-vllm-nvfp4-runtime) below. The **GB10 vLLM DeepSeek-V4-Flash-Vision** runtime (`cuda-gb10-vllm-dsv4vision/`) is the first-party vLLM image plus the FlashInfer prefill arms GB10 needs; see [below](#gb10-vllm-deepseek-v4-flash-vision-runtime).
 
 It also builds the **Foreman coder-agent** toolchain image (`coder/`): the foreman-agent binary plus the Go toolchain its in-workspace self-gate needs. Same discipline as the runtime images: pinned inputs, built here, owned. See [Coder agent image](#coder-agent-image) below.
 
@@ -142,6 +142,18 @@ So the cutlass-dsl family is allowlisted by name and printed loudly, while anyth
 **The allowlist is a statement about metadata, not a claim that the kernels run.** Whether b12x 1.3.0's W4A16 path works against cutlass-dsl 4.7.0 is a GPU question CI cannot answer; the GB10 smoke test settles it. Don't "resolve" it by pinning cutlass-dsl down without measuring — that would swap a CUDA DSL underneath a working vLLM build to satisfy metadata rather than an observed failure.
 
 arm64 only, and here that is a hard constraint rather than a preference: the base publishes no amd64 manifest at all.
+
+## GB10 vLLM DeepSeek-V4-Flash-Vision runtime
+
+`ghcr.io/defilantech/llmkube-vllm-cuda-gb10-dsv4vision` (`cuda-gb10-vllm-dsv4vision/`) serves `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` across two DGX Sparks (TP2 + expert parallel over RoCE) with vLLM.
+
+**Why it exists.** The first-party `vllm/vllm-openai:deepseekv4-flash-vision` image, built from the open vLLM PR #54566 branch, loads this model on GB10 and then dies on the first prefill: FlashInfer 0.6.18's sm120 sparse-MLA prefill dispatcher has no instantiation for the Vision variant's widened 512-entry causal-SWA candidate buffer (`Unsupported sparse-MLA prefill configuration: model=DSV4 num_heads=32 topk=512 ...`). Both shapes (compress-4: 512/512 at page 64; compress-128: 512 primary at page 2) are covered by [flashinfer#4850](https://github.com/flashinfer-ai/flashinfer/pull/4850) at `7a55473b9`, the second arm added there after our report.
+
+**Why it is one layer.** FlashInfer ships the kernel source inside the wheel and JIT-compiles it with the image's nvcc, but only when no prebuilt AOT artifact exists for the module. So the image replaces one `.cu` file and deletes one `.so`; the build guard asserts both arms are in the shipped source and that the loader resolves the module to JIT. First start pays roughly two minutes of compile per node; point `FLASHINFER_WORKSPACE_BASE` at a persistent path to pay it once.
+
+Measured on the Shadowstack ring (two GB10, fp8 KV, block 256, 3.7k-token prompt, greedy): prefill 2,079 tok/s and decode 25.3 tok/s without a draft, 39.1 tok/s with DSpark k=3 (`enable_adaptive_verification` must be `false` on this backend). Image input verified. The llama.cpp RPC ring it replaces measured 357 / 19.4 with the same probe.
+
+**What it is not.** It tracks an unmerged vLLM branch and an open FlashInfer PR, pinned by digest. When a tagged `vllm-openai` image carries both, delete this variant and point `spec.image` at that tag.
 
 ## Coder agent image
 
