@@ -16,8 +16,10 @@ echo "== shim present in the shipped ple_layer.py =="
 if ! src="$(run cat "${PLE}" 2>&1)"; then
   echo "${src}"; echo "FAIL: ${PLE} missing; the vLLM package layout changed"; exit 1
 fi
+# Substring tests, not `printf | grep -q`: grep -q exits at the first match, printf takes
+# SIGPIPE, and under pipefail the pipeline reports failure on a PASSING file.
 for needle in '_ORIG_PLE_QUANT_RESOLVER' 'PLE_QUANT_OVERRIDE' 'Qwen3_8FlashNextPLEFp8EmbeddingMethod'; do
-  if ! printf '%s\n' "${src}" | grep -q "${needle}"; then
+  if [[ "${src}" != *"${needle}"* ]]; then
     echo "FAIL: '${needle}' not found in ${PLE}"; exit 1
   fi
 done
