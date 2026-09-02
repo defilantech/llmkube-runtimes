@@ -369,27 +369,28 @@ inline bool dispatch_dsv4_dual(int num_heads, int topk, int topk_extra, int extr
       stream)
 
   // DeepSeek V4 Vision widens the primary causal-SWA candidate set from
-  // 128 to 512 entries and pairs it with a 512-entry global cache. Keep this
-  // instantiation limited to the live-tested TP shape and cache layout.
-  if (num_heads == 32 && topk == 512 && topk_extra == 512 && extra_page_block_size == 64) {
-    DISPATCH_DUAL_MG_CM(BF16, 32, 512, 64, 2);
-    return true;
-  }
-  if (num_heads == 64 && topk == 512 && topk_extra == 512 && extra_page_block_size == 64) {
-    DISPATCH_DUAL_MG_CM(BF16, 64, 512, 64, 2);
-    return true;
-  }
-  // LLMKube addition (2026-09-02): the compress-128 layers of the Vision variant reach the
-  // dual path with the same widened primary top-k 512 but a 128-wide compressed cache at
-  // page block size 2 (256 / 128). PR #4850 only covered the compress-4 shape (512/512, page 64).
-  // topk_extra is a runtime argument of the non-fulltile launcher, so only PBSX needs the arm.
-  if (num_heads == 32 && topk == 512 && extra_page_block_size == 2) {
-    DISPATCH_DUAL_MG_CM(BF16, 32, 512, 2, 2);
-    return true;
-  }
-  if (num_heads == 64 && topk == 512 && extra_page_block_size == 2) {
-    DISPATCH_DUAL_MG_CM(BF16, 64, 512, 2, 2);
-    return true;
+  // 128 to 512 entries. topk_extra remains runtime, and the extra cache uses
+  // both enumerated page layouts in serving.
+  if (topk == 512) {
+    if (extra_page_block_size == 64) {
+      if (num_heads == 32) {
+        DISPATCH_DUAL_MG_CM(BF16, 32, 512, 64, 2);
+        return true;
+      }
+      if (num_heads == 64) {
+        DISPATCH_DUAL_MG_CM(BF16, 64, 512, 64, 2);
+        return true;
+      }
+    } else if (extra_page_block_size == 2) {
+      if (num_heads == 32) {
+        DISPATCH_DUAL_MG_CM(BF16, 32, 512, 2, 2);
+        return true;
+      }
+      if (num_heads == 64) {
+        DISPATCH_DUAL_MG_CM(BF16, 64, 512, 2, 2);
+        return true;
+      }
+    }
   }
 
 #define DISPATCH_BY_NH_PBSX(PBSX)                     \

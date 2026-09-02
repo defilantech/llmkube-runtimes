@@ -22,10 +22,10 @@ echo "== dispatcher arms in the shipped source =="
 if ! src="$(run cat "${CU}" 2>&1)"; then
   echo "${src}"; echo "FAIL: ${CU} missing; the FlashInfer layout changed"; exit 1
 fi
-n64="$(printf '%s\n' "${src}" | grep -c 'topk == 512 && topk_extra == 512 && extra_page_block_size == 64' || true)"
-n2="$(printf '%s\n' "${src}" | grep -c 'topk == 512 && extra_page_block_size == 2' || true)"
-echo "compress-4 arm (PR #4850) occurrences: ${n64}  (want 2: NH 32 and 64)"
-echo "compress-128 arm occurrences:          ${n2}   (want 2: NH 32 and 64)"
+n64="$(printf '%s\n' "${src}" | grep -c 'DISPATCH_DUAL_MG_CM(BF16, [36][24], 512, 64, 2)' || true)"
+n2="$(printf '%s\n' "${src}" | grep -c 'DISPATCH_DUAL_MG_CM(BF16, [36][24], 512, 2, 2)' || true)"
+echo "page-64 Vision dual arms (compress-4):  ${n64}  (want 2: NH 32 and 64)"
+echo "page-2 Vision dual arms (compress-128): ${n2}   (want 2: NH 32 and 64)"
 if [ "${n64}" -lt 2 ] || [ "${n2}" -lt 2 ]; then
   echo "FAIL: the Vision prefill arms are not in the shipped dispatcher"; exit 1
 fi

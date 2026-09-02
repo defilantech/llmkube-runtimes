@@ -43,8 +43,9 @@ FROM docker.io/vllm/vllm-openai:deepseekv4-flash-vision-arm64-cu130@${BASE_DIGES
 ARG FI_CSRC=/usr/local/lib/python3.12/dist-packages/flashinfer/data/csrc
 ARG FI_AOT=/usr/local/lib/python3.12/dist-packages/flashinfer_jit_cache/jit_cache/sparse_mla_sm120/sparse_mla_sm120.so
 
-# The patched dispatcher: upstream main at 2026-09-01 + PR #4850 + the compress-128
-# arm. Kept as a whole file, not a diff, so the build never depends on fuzz.
+# The dispatcher exactly as in flashinfer-ai/flashinfer#4850 at 7a55473b9 (2026-09-02),
+# which carries both Vision arms (the compress-128 one landed there after our report).
+# Kept as a whole file, not a diff, so the build never depends on fuzz.
 COPY sparse_mla_sm120_prefill.cu ${FI_CSRC}/sparse_mla_sm120_prefill.cu
 
 # PATCH GUARD. Assert the two arms this image exists for are in the shipped
@@ -52,9 +53,9 @@ COPY sparse_mla_sm120_prefill.cu ${FI_CSRC}/sparse_mla_sm120_prefill.cu
 # file or renames the module must fail here, not on a Spark at profile time.
 RUN set -e; \
     test -f "${FI_CSRC}/sparse_mla_sm120_prefill.cu"; \
-    n=$(grep -c 'topk == 512 && topk_extra == 512 && extra_page_block_size == 64' "${FI_CSRC}/sparse_mla_sm120_prefill.cu"); \
-    m=$(grep -c 'topk == 512 && extra_page_block_size == 2' "${FI_CSRC}/sparse_mla_sm120_prefill.cu"); \
-    if [ "$n" -lt 2 ] || [ "$m" -lt 2 ]; then echo "ERROR: expected PR4850 (${n}) and compress-128 (${m}) dual arms for NH 32 and 64"; exit 1; fi; \
+    n=$(grep -c 'DISPATCH_DUAL_MG_CM(BF16, [36][24], 512, 64, 2)' "${FI_CSRC}/sparse_mla_sm120_prefill.cu"); \
+    m=$(grep -c 'DISPATCH_DUAL_MG_CM(BF16, [36][24], 512, 2, 2)' "${FI_CSRC}/sparse_mla_sm120_prefill.cu"); \
+    if [ "$n" -lt 2 ] || [ "$m" -lt 2 ]; then echo "ERROR: expected the page-64 (${n}) and page-2 (${m}) Vision dual arms for NH 32 and 64"; exit 1; fi; \
     test -f "${FI_AOT}" || { echo "ERROR: AOT artifact not at ${FI_AOT}; base layout changed, re-verify JitSpec.is_aot"; exit 1; }; \
     rm -f "${FI_AOT}"; \
     python3 - <<'PY'
@@ -75,4 +76,4 @@ LABEL org.opencontainers.image.title="llmkube-vllm-cuda-gb10-dsv4vision" \
       org.opencontainers.image.source="https://github.com/defilantech/llmkube-runtimes" \
       org.opencontainers.image.licenses="Apache-2.0" \
       io.llmkube.base.digest="${BASE_DIGEST}" \
-      io.llmkube.flashinfer.patch="flashinfer#4850+compress128"
+      io.llmkube.flashinfer.patch="flashinfer#4850@7a55473b9"
