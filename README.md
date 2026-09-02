@@ -143,6 +143,16 @@ So the cutlass-dsl family is allowlisted by name and printed loudly, while anyth
 
 arm64 only, and here that is a hard constraint rather than a preference: the base publishes no amd64 manifest at all.
 
+## GB10 vLLM Qwen3.8-Flash-Next runtime
+
+`ghcr.io/defilantech/llmkube-vllm-cuda-gb10-qwen38fn` (`cuda-gb10-vllm-qwen38fn/`) serves `RadixArk/Qwen3.8-Flash-Next-NVFP4` across two DGX Sparks (TP2 + expert parallel over RoCE) with vLLM.
+
+**Why it exists.** The first-party `vllm/vllm-openai:qwen38-flash-next` image refuses the checkpoint's FP8 PLE n-gram shards: the PLE quant-method resolver takes the FP8 path only when the whole checkpoint is an `Fp8Config`, and a ModelOpt-NVFP4 checkpoint excludes `*.ple.*` from its quant config ([vllm#54765](https://github.com/vllm-project/vllm/issues/54765), still true on merged main). It builds a BF16 table instead and dies. The community dual-Spark recipes fix it with a 7-line resolver shim and bind-mount the patched file; this image applies the same shim to the image's own `ple_layer.py` at build time and asserts it, so the runtime has no host-path dependency. The override is opt-in (`PLE_QUANT_OVERRIDE=fp8`), so FP8 and BF16 checkpoints are unaffected.
+
+Measured on the Shadowstack ring (two GB10, bf16 KV, MTP 3, 3.7k-token prompt, greedy): prefill 2,789 tok/s, decode 48.1 tok/s single-stream; 1,713 tok/s prefill at a 29k prompt; 1.72M-token KV pool. Image input verified. MTP k=2 measured 45.6.
+
+**What it is not.** It tracks a pre-release model tag of `vllm-openai` (vLLM `0.1.dev20073`); upstream merged Flash-Next support in vllm#53896 but no tagged release carries it and the PLE gate is unfixed there too. When a tagged image loads FP8 PLE unaided, delete this variant.
+
 ## Coder agent image
 
 `ghcr.io/defilantech/llmkube-foreman-agent-coder` — a Foreman agent that can run its own coder gate.

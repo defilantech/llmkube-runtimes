@@ -1,0 +1,154 @@
+name: build-cuda-gb10-vllm-qwen38fn
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cuda-gb10-vllm-qwen38fn/**'
+      - 'scripts/vllm-qwen38fn-gate.sh'
+      - 'scripts/dockerfile-parse-check.py'
+      - '.github/workflows/build-cuda-gb10-vllm-qwen38fn.yml'
+    tags: ['cuda-gb10-vllm-qwen38fn-v*']
+  pull_request:
+    paths:
+      - 'cuda-gb10-vllm-qwen38fn/**'
+      - 'scripts/vllm-qwen38fn-gate.sh'
+      - 'scripts/dockerfile-parse-check.py'
+      - '.github/workflows/build-cuda-gb10-vllm-qwen38fn.yml'
+  workflow_dispatch: {}
+  # NO schedule, for the same reason as the NVFP4 image next door.
+  #
+  # The sibling llama.cpp images run a weekly canary because they COMPILE: their
+  # pinned ref plus a moving CUDA base can drift into a build that no longer
+  # emits sm_121, and only a rebuild reveals it. This image compiles nothing. The
+  # base is pinned by digest and b12x is pinned to an exact version, so a weekly
+  # rebuild reproduces the same content and burns an arm64 runner to tell us
+  # what the pins already say.
+  #
+  # What a canary WOULD catch here -- the base digest being deleted from Docker
+  # Hub, or the b12x wheel being yanked from PyPI -- is a supply-chain event that
+  # a weekly job would surface days late anyway, and which the next real build
+  # fails on loudly. Bump the pins by hand; see the Dockerfile for when.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-cuda-gb10-vllm-qwen38fn-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # arm64 native, and here it is a hard requirement rather than a preference:
+  # the pinned vllm-openai:qwen38-flash-next-arm64-cu130 digest is an arm64
+  # manifest ONLY, so an x86 runner cannot pull the base at all.
+  image:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write       # push candidate to GHCR (trusted refs only)
+      id-token: write        # keyless provenance attestation
+      attestations: write
+    env:
+      IMAGE: ghcr.io/defilantech/llmkube-vllm-cuda-gb10-qwen38fn
+      LOCAL: ghcr.io/defilantech/llmkube-vllm-cuda-gb10-qwen38fn:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # A vLLM + CUDA 13 aarch64 base is tens of GB unpacked and a hosted runner
+      # ships ~14GB free, so this is not the optional hygiene step it is in the
+      # compiled images -- without it the pull itself fails on ENOSPC. df is
+      # printed so a future disk failure is diagnosable from the log.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af || true
+          df -h /
+
+      # Seconds, and it runs BEFORE the base pull on purpose. A previous run
+      # spent a full multi-GB arm64 base pull only to die on
+      # `unknown instruction: }` -- a static property of the file that never
+      # needed a builder to detect. Checks every Dockerfile in the repo, not
+      # just this one, since the cost is the same.
+      - name: Dockerfile parse check (before the expensive pull)
+        run: python3 scripts/dockerfile-parse-check.py $(git ls-files '*Dockerfile')
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      # NO cache-from/cache-to, unlike every sibling workflow. The GitHub Actions
+      # cache is 10GB per repo shared across all of them; this image's only
+      # non-base layer is a pip install of a small pure-Python wheel, so caching
+      # would save seconds while risking eviction of the Vulkan, ROCm, CUDA and
+      # coder caches, where a miss costs half an hour of compile.
+      - name: Build image (load locally for the gate)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: cuda-gb10-vllm-qwen38fn
+          load: true
+          tags: ${{ env.LOCAL }}
+
+      # The Dockerfile's own guards ran during build. This re-asserts them on the
+      # SHIPPED image, which is the check that still means something after a
+      # cached or reordered layer. Source-level checks only; no GPU.
+      - name: Tier-1 gate (FP8 PLE resolver shim is the active resolver)
+        run: ./scripts/vllm-qwen38fn-gate.sh "${{ env.LOCAL }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      # Worth more here than on the images we compile: most of this filesystem
+      # comes from a third-party base, and the SBOM is the only record of what
+      # that base actually contained at the digest we pinned.
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-cuda-gb10-vllm-qwen38fn-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + gate above, but never reach here:
+      # GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. The candidate is unsigned-for-trust; the out-of-band GPU
+      # promoter smoke-tests it on a real GB10 before anything consumes it. ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push candidate
+        if: github.event_name != 'pull_request'
+        run: |
+          CAND="${IMAGE}:candidate-${GITHUB_SHA}"
+          docker tag "${LOCAL}" "${CAND}"
+          docker push "${CAND}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${CAND}" | cut -d@ -f2)"
+          echo "DIGEST=${DIGEST}" >> "${GITHUB_ENV}"
+          echo "Pushed ${CAND} (${DIGEST})"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
+
+  # Stable required status check, matching the sibling workflows: branch
+  # protection gates on "build", and this job reports it independently of the
+  # image job's name.
+  build:
+    needs: [image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the image build passed
+        run: |
+          result="${{ needs.image.result }}"
+          echo "image result: ${result}"
+          test "${result}" = "success"
