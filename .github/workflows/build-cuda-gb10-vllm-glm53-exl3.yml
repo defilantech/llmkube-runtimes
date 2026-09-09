@@ -1,0 +1,207 @@
+name: build-cuda-gb10-vllm-glm53-exl3
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cuda-gb10-vllm-glm53-exl3/**'
+      - 'scripts/vllm-gb10-glm53-exl3-gate.sh'
+      - 'scripts/dockerfile-parse-check.py'
+      - '.github/workflows/build-cuda-gb10-vllm-glm53-exl3.yml'
+    tags: ['cuda-gb10-vllm-glm53-exl3-v*']
+  pull_request:
+    paths:
+      - 'cuda-gb10-vllm-glm53-exl3/**'
+      - 'scripts/vllm-gb10-glm53-exl3-gate.sh'
+      - 'scripts/dockerfile-parse-check.py'
+      - '.github/workflows/build-cuda-gb10-vllm-glm53-exl3.yml'
+  workflow_dispatch: {}
+  # NO schedule. Unlike the llama.cpp images, whose pinned ref plus a moving
+  # CUDA base can drift into a build that no longer emits sm_121, every input
+  # here is pinned: the vLLM base by digest, ExLlamaV3 by commit, and the
+  # overlay vendored in-tree. A weekly rebuild would reproduce identical content
+  # and spend an hour of arm64 CUDA compile to restate what the pins say.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-cuda-gb10-vllm-glm53-exl3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    # arm64 native and a hard requirement rather than a preference: GB10 is
+    # aarch64 Grace, the vLLM base publishes no amd64 manifest, and the CUDA
+    # extension is compiled here for sm_121. QEMU would not help.
+    runs-on: ubuntu-24.04-arm
+    # This image COMPILES (ExLlamaV3 plus two CUDA kernel sets), unlike the
+    # NVFP4 sibling which only adds a pip layer. Default 360 is the ceiling; set
+    # explicitly so a hung nvcc fails as a timeout rather than running the
+    # concurrency group into the next push.
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: write      # push candidate to GHCR (trusted refs only)
+      id-token: write      # keyless provenance attestation
+      attestations: write
+    env:
+      IMAGE: ghcr.io/defilantech/llmkube-vllm-cuda-gb10-glm53-exl3
+      LOCAL: ghcr.io/defilantech/llmkube-vllm-cuda-gb10-glm53-exl3:ci-${{ github.sha }}
+      # The Apache-2.0 vLLM base the MIT recipe pins. Bumping it means editing
+      # both this and the Dockerfile's ARG BASE; the drift check enforces that.
+      BASE_DIGEST: 'sha256:905c02933be6021301db2dc284e24e3727467aa3a0f63b41d609885778a07bce'
+      # The last upstream commit before the AGPL-3.0 relicense. This is a
+      # license boundary, not a version preference. See the Dockerfile header.
+      KIT_COMMIT: '9cdf84570117a6afc203125a5c01ec61978c4e60'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # Load-bearing, not hygiene. The base is 9.7 GB compressed across 32
+      # layers and unpacks to roughly 21 GB, against a hosted runner's ~14 GB
+      # free; on top of that the ExLlamaV3 build tree and nvcc intermediates
+      # need several GB more. Without this the pull fails on ENOSPC before a
+      # single line compiles.
+      #
+      # If this stops being enough the honest fix is a larger or self-hosted
+      # runner (a Spark already serves as the Tier-2 host), NOT a thinner build.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
+                      /usr/share/swift /usr/local/.ghcup || true
+          sudo docker image prune -af || true
+          df -h /
+
+      # The license boundary is the reason this image is built from source at
+      # all, so it is checked before anything expensive runs, and on the source
+      # tree rather than only inside the build.
+      - name: Verify the vendored overlay stays inside the MIT boundary
+        run: |
+          cd cuda-gb10-vllm-glm53-exl3
+          fail=0
+          for f in overlay/patch_adaptive_k.py overlay/patch_dense_fp8.py; do
+            if [ -e "$f" ]; then
+              echo "FAIL: $f is AGPL-3.0 (committed upstream after the 2026-09-07 relicense)"
+              echo "      and cannot be vendored into this Apache-2.0 repository."
+              fail=1
+            fi
+          done
+          if ls overlay/*ablit* 2>/dev/null | grep -q .; then
+            echo "FAIL: abliteration artifacts are deliberately not shipped."
+            fail=1
+          fi
+          if [ ! -f LICENSE.upstream-MIT ] || [ ! -f NOTICE ]; then
+            echo "FAIL: attribution files missing; MIT requires the notice to travel."
+            fail=1
+          fi
+          head -1 LICENSE.upstream-MIT | grep -q '^MIT License' \
+            || { echo "FAIL: LICENSE.upstream-MIT is not the MIT text."; fail=1; }
+          grep -q "$KIT_COMMIT" Dockerfile \
+            || { echo "FAIL: the Dockerfile does not record the pinned MIT commit $KIT_COMMIT"; fail=1; }
+          exit $fail
+
+      - name: Verify the base digest matches the Dockerfile
+        run: |
+          dockerfile_pin="$(sed -n 's|^ARG BASE=.*@\(sha256:[0-9a-f]\{64\}\)$|\1|p' \
+            cuda-gb10-vllm-glm53-exl3/Dockerfile)"
+          echo "Dockerfile ARG BASE: ${dockerfile_pin}"
+          echo "workflow env:        ${BASE_DIGEST}"
+          if [ -z "${dockerfile_pin}" ]; then
+            echo "FAIL: ARG BASE is not pinned to a sha256 digest."
+            exit 1
+          fi
+          if [ "${dockerfile_pin}" != "${BASE_DIGEST}" ]; then
+            echo "FAIL: base digest drift between the workflow and the Dockerfile."
+            exit 1
+          fi
+
+      # Seconds, and deliberately before the multi-GB pull and the compile.
+      - name: Dockerfile parse check (before the expensive pull)
+        run: python3 scripts/dockerfile-parse-check.py $(git ls-files '*Dockerfile')
+
+      - name: Shell syntax check
+        run: |
+          bash -n cuda-gb10-vllm-glm53-exl3/entrypoint.sh
+          bash -n scripts/vllm-gb10-glm53-exl3-gate.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      # MAX_JOBS is derived from the runner, not fixed at upstream's 8. A hosted
+      # arm64 runner has 4 vCPU and 16 GB RAM, and nvcc peaks at multiple GB per
+      # process; 8 concurrent compiles get OOM-killed, which surfaces as a bare
+      # "Killed" with no useful error. nproc is the cap, and the Dockerfile's
+      # own default (3) is the conservative fallback.
+      - name: Choose a build parallelism the runner can survive
+        run: |
+          jobs="$(nproc)"
+          [ "$jobs" -gt 4 ] && jobs=4
+          echo "MAX_JOBS=${jobs}" >> "${GITHUB_ENV}"
+          echo "nproc=$(nproc) MemTotal=$(awk '/MemTotal/{print $2/1024/1024" GiB"}' /proc/meminfo) -> MAX_JOBS=${jobs}"
+
+      # NO cache-from/cache-to. The Actions cache is 10 GB per repo shared
+      # across every workflow here, and this image's compiled layer alone would
+      # dominate it, evicting the Vulkan, ROCm, CUDA and coder caches where a
+      # miss costs half an hour. This build is not on the routine path.
+      - name: Build image (load locally for the gate)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: cuda-gb10-vllm-glm53-exl3
+          load: true
+          tags: ${{ env.LOCAL }}
+          build-args: |
+            MAX_JOBS=${{ env.MAX_JOBS }}
+
+      - name: Disk after build
+        if: always()
+        run: df -h /
+
+      # Re-asserts the Dockerfile's guards on the SHIPPED image and drives the
+      # behavioural ones (ABLIT refusal, stamp agreement) rather than reading
+      # them. See the script for why nothing here launches a CUDA kernel.
+      - name: Tier-1 gate (EXL3 registered; MLA padded; kernels built; MIT boundary)
+        run: ./scripts/vllm-gb10-glm53-exl3-gate.sh "${{ env.LOCAL }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-cuda-gb10-vllm-glm53-exl3-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + gate above but never reach here:
+      # GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. The candidate is unsigned-for-trust; the out-of-band GPU
+      # promoter smoke-tests it on a real GB10 pair before anything serves. ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push candidate
+        if: github.event_name != 'pull_request'
+        run: |
+          CAND="${IMAGE}:candidate-${GITHUB_SHA}"
+          docker tag "${LOCAL}" "${CAND}"
+          docker push "${CAND}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${CAND}" | cut -d@ -f2)"
+          echo "DIGEST=${DIGEST}" >> "${GITHUB_ENV}"
+          echo "Pushed ${CAND} (${DIGEST})"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
