@@ -210,8 +210,10 @@ most of the measured decode throughput; the license-safe fallback is the checkpo
 at a real throughput cost. See `cuda-gb10-vllm-glm53-exl3/NOTICE`.
 
 arm64 only and a hard constraint: GB10 is aarch64 Grace, the base publishes no amd64 manifest, and
-the extension is compiled for `sm_121`. The base unpacks to about 21 GB, so the build needs the
-runner disk reclaim step and a build parallelism the runner can survive.
+the extension is compiled for `sm_121`. Measured on the first green build: the whole job is about
+13 minutes on `ubuntu-24.04-arm`, of which the CUDA compile is about 6 at `MAX_JOBS=4`, with 121 GB
+free on the runner. Build parallelism still has to be capped at `nproc` because the runner has
+4 vCPU and 16 GB, where upstream's fixed `MAX_JOBS=8` would be OOM-killed.
 
 ## Coder agent image
 

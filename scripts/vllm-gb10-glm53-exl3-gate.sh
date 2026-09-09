@@ -18,9 +18,10 @@
 # Everything runs against the SHIPPED image, not the build stage, which is the
 # check that survives a cache hit or a reordered layer.
 #
-# NOTHING HERE LAUNCHES A KERNEL. `import exllamav3_ext` is a shared-object
-# load and is safe without a device, but no CUDA work is dispatched: a hosted
-# runner has no GPU and a failure there would say nothing about the image.
+# NOTHING HERE LAUNCHES A KERNEL. Importing torch and exllamav3_ext loads
+# shared objects and is safe without a device, but no CUDA work is dispatched: a
+# hosted runner has no GPU and a failure there would say nothing about the
+# image. The extension must be imported AFTER torch or it cannot find libc10.so.
 set -euo pipefail
 
 IMAGE="${1:?usage: vllm-gb10-glm53-exl3-gate.sh <image-ref>}"
@@ -66,7 +67,15 @@ echo "PASS: sparse-MLA padding and prefill flag are present"
 
 # --- 3. The CUDA extension carries every fused/fat entry point ---------------
 echo "== exllamav3_ext symbols =="
+# `import torch` FIRST is required, not stylistic. exllamav3_ext links against
+# libtorch, so importing it in a bare interpreter dies with
+# `ImportError: libc10.so: cannot open shared object file` before any symbol is
+# looked at. Importing torch loads that library into the process. Upstream's
+# build-time check has the same two-step; dropping it here produced a gate
+# failure that read exactly like a missing-kernel failure on an image whose
+# kernels were fine.
 if ! out="$(run python3 -c '
+import torch  # noqa: F401  loads libc10.so so the extension can link
 import exllamav3_ext, sys
 want = ("exl3_moe", "exl3_fat_gemm", "exl3_fat_gemm_scatter",
         "exl3_fat_moe_gateup", "exl3_fat_moe_down", "exl3_fat_moe_gather")
