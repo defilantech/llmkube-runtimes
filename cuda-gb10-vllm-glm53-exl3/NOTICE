@@ -1,0 +1,68 @@
+NOTICE for llmkube-vllm-cuda-gb10-glm53-exl3
+============================================
+
+This runtime image is Apache-2.0 (the llmkube-runtimes repository license) and
+incorporates MIT-licensed third-party material. Attribution below is a
+condition of those licenses, not a courtesy.
+
+
+Vendored MIT material
+---------------------
+
+`overlay/`, `tests/`, `files/chat_template.jinja` and the structure of the
+Dockerfile derive from:
+
+    MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks
+    https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks
+    commit 9cdf84570117a6afc203125a5c01ec61978c4e60
+    Copyright (c) 2026 Mia's AI Lab
+    MIT License, reproduced in LICENSE.upstream-MIT
+
+That commit is the last before the project relicensed to AGPL-3.0 on
+2026-09-07 (commit cf0f430e, 13:43 UTC). Material from that project committed
+after that timestamp is AGPL-3.0 and is deliberately NOT included here, because
+AGPL-3.0 cannot be redistributed under this repository's Apache-2.0 license.
+See the Dockerfile header before changing any vendored file.
+
+
+Build-time dependencies
+-----------------------
+
+    vLLM                    Apache-2.0   https://github.com/vllm-project/vllm
+      consumed as the base image vllm/vllm-openai, pinned by digest
+
+    ExLlamaV3               MIT          https://github.com/turboderp-org/exllamav3
+      commit c5d9c657966ffeeaa9353f0cc899f18629da4a13, compiled from source
+
+
+Model artifacts, which this image does NOT contain
+--------------------------------------------------
+
+The image ships no weights. The artifacts it is built to serve carry their own
+terms, and those terms follow the weights rather than this image:
+
+    GLM-5.3-Flash EXL3/TR3 4bpw checkpoint
+      Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw, a mirror of
+      brandonmusic/GLM-5.3-Flash-tr3-4bpw
+      ShapleyMcg License 1.0, Copyright (c) 2026 Brandon M. Music
+      https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw
+
+      Source-available, not OSI open source. Commercial use IS permitted.
+      Attribution is a CONDITION of the grant (Section 3), so any model card,
+      README, benchmark, post or paper reporting results produced with this
+      checkpoint must credit the Work by name and link its canonical
+      repository. The license also excludes one named person from any grant
+      and forbids providing the Work to them (Sections 4 to 6); that exclusion
+      travels with the weights regardless of who redistributes them.
+
+    GLM-5.3-Flash DFlash2 speculative drafter
+      incoai/GLM-5.3-Flash-DFlash2
+      CC BY-NC-ND 4.0
+      https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2
+
+      NonCommercial and NoDerivatives. Upstream labels it research and
+      evaluation use. It is the default speculator in the upstream recipe and
+      supplies most of the measured decode throughput, but its terms are
+      narrower than everything else here. Serving it in a commercial context is
+      outside its license. The license-safe fallback is the checkpoint's own
+      MTP head (SPEC_METHOD=mtp), at a substantial throughput cost.

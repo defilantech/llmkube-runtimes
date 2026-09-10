@@ -143,6 +143,78 @@ So the cutlass-dsl family is allowlisted by name and printed loudly, while anyth
 
 arm64 only, and here that is a hard constraint rather than a preference: the base publishes no amd64 manifest at all.
 
+## GB10 vLLM GLM-5.3-Flash EXL3 runtime
+
+`ghcr.io/defilantech/llmkube-vllm-cuda-gb10-glm53-exl3` (`cuda-gb10-vllm-glm53-exl3/`) serves
+[GLM-5.3-Flash EXL3/TR3 4bpw](https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw)
+across **two** DGX Sparks at TP=2 over CX7. Roughly 164 GiB of weights in 120 shards, so unlike
+every other image here it is inherently a two-node runtime.
+
+**Stock vLLM cannot serve this checkpoint at all.** It dies on the first forward with
+`pe_dim must be 64 for fp8_ds_mla`. GLM-5.3-Flash is NoPE MLA (`qk_rope_head_dim=0`,
+`kv_lora_rank=512`), and the only sparse-MLA backend on SM12x is `FLASHINFER_MLA_SPARSE_SM120`,
+whose packed record is 512 NoPE plus 16 B scales plus 128 B RoPE. The overlay zero-pads the
+512-d latent into that geometry and registers a real EXL3 quantization method so routed experts
+stay packed as trellis + suh + svh + mcg. Registering the *name* `exl3` is not enough; the method
+has to run Trellis/MCG kernels or the experts expand to BF16 and no longer fit.
+
+**Built from source, and the reason is licensing.** The recipe comes from
+[MiaAI-Lab's kit](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks), pinned at commit
+`9cdf8457`, the last commit before that project **relicensed to AGPL-3.0 on 2026-09-07**. At that
+commit its LICENSE is MIT, retained here as `LICENSE.upstream-MIT`. This repo is Apache-2.0: MIT
+vendors into that cleanly with attribution, AGPL-3.0 does not. Upstream's own relicense notice
+preserves MIT for earlier contributions, and a granted license cannot be revoked, so this snapshot
+stays usable on MIT terms.
+
+That boundary rules out their prebuilt image, whose binaries come from post-relicense source. So
+this builds on the Apache-2.0 `vllm/vllm-openai` base (pinned by digest) and compiles MIT
+[ExLlamaV3](https://github.com/turboderp-org/exllamav3) plus the two CUDA kernel sets for
+`sm_121`. **Do not "update" the overlay from upstream main.** Anything committed after
+2026-09-07 13:43 UTC is AGPL-3.0. CI checks that boundary on the source tree before it builds, and
+again on the shipped image.
+
+**What the MIT line costs is smaller than it sounds.** Exactly two overlay patches are AGPL-only
+and absent: `patch_adaptive_k.py` and `patch_dense_fp8.py`. Both are opt-in and off by default
+upstream, and the last AGPL-era change to `exl3.py` only wires the second one in, so the default
+serving configuration is complete. The E3 grouped MoE kernel, worth +37 to +45% on cold prefill,
+was committed hours before the relicense and **is** included.
+
+**Abliteration is absent, not defaulted off.** Upstream ships an opt-in refusal-direction ablation
+with donor artifacts. None of it is copied here, and the entrypoint refuses to start if `ABLIT` is
+set, so enabling it would take a conscious re-add rather than an environment variable.
+
+**A Kubernetes detail worth knowing.** A container `command` overrides the image `ENTRYPOINT`, and
+the LLMKube vLLM backend sets `Command` to `["vllm","serve"]` for every vLLM InferenceService. So
+on the normal operator path the wrapper does **not** run, and the image is built to be correct
+without it: every patch is applied at build, and upstream's own test suite runs at build against
+the patched tree. Route through the wrapper deliberately if you want the runtime check:
+
+```yaml
+spec:
+  command: ["/usr/local/bin/glm53-entrypoint.sh", "vllm", "serve"]
+  env:
+    - {name: GLM53_VERIFY_TREE, value: "1"}
+```
+
+The Tier-1 gate re-asserts on the shipped image and **drives** the behavioural guards rather than
+reading them: `ABLIT=1` must fail, a default start must succeed, and the recorded vLLM tree digest
+must match a digest recomputed inside the container. A guard that cannot fail is not a guard.
+
+What Tier 1 cannot answer: that the checkpoint loads, that TP=2 forms over CX7, and the decode and
+prefill numbers. That is the out-of-band GB10 smoke.
+
+**Model licenses travel with the weights, not this image**, which ships none. The checkpoint is
+ShapleyMcg 1.0: source-available, commercial use permitted, attribution a condition of the grant.
+The DFlash2 speculative drafter is CC BY-NC-ND 4.0, NonCommercial and NoDerivatives, and supplies
+most of the measured decode throughput; the license-safe fallback is the checkpoint's own MTP head
+at a real throughput cost. See `cuda-gb10-vllm-glm53-exl3/NOTICE`.
+
+arm64 only and a hard constraint: GB10 is aarch64 Grace, the base publishes no amd64 manifest, and
+the extension is compiled for `sm_121`. Measured on the first green build: the whole job is about
+13 minutes on `ubuntu-24.04-arm`, of which the CUDA compile is about 6 at `MAX_JOBS=4`, with 121 GB
+free on the runner. Build parallelism still has to be capped at `nproc` because the runner has
+4 vCPU and 16 GB, where upstream's fixed `MAX_JOBS=8` would be OOM-killed.
+
 ## Coder agent image
 
 `ghcr.io/defilantech/llmkube-foreman-agent-coder` — a Foreman agent that can run its own coder gate.
@@ -201,6 +273,23 @@ docker build -t llmkube-llama-cuda-gb10-turbo:dev cuda-gb10-turbo/
 docker build -t llmkube-vllm-cuda-gb10-nvfp4:dev cuda-gb10-vllm-nvfp4/
 ./scripts/vllm-gb10-gate.sh llmkube-vllm-cuda-gb10-nvfp4:dev 1.3.0
 ```
+
+```bash
+# GB10 vLLM GLM-5.3-Flash EXL3 (arm64 only; compiles ExLlamaV3 + CUDA kernels)
+docker build --build-arg MAX_JOBS="$(nproc)" \
+  -t llmkube-vllm-cuda-gb10-glm53-exl3:dev cuda-gb10-vllm-glm53-exl3/
+./scripts/vllm-gb10-glm53-exl3-gate.sh llmkube-vllm-cuda-gb10-glm53-exl3:dev
+```
+
+`vllm-gb10-glm53-exl3-gate.sh` takes only an image ref. Like its sibling it imports neither `vllm`
+nor `exllamav3_ext`, since both initialize CUDA on import. Beyond file and metadata checks it runs
+the entrypoint twice as a behavioural test: once against an empty overlay directory, which must
+fail, and once against the real one, which must succeed.
+
+Bump the base by editing the `FROM` digest in `cuda-gb10-vllm-glm53-exl3/Dockerfile` and
+`BASE_DIGEST` in the workflow together; a build fails if they disagree. Refresh
+`cuda-gb10-vllm-glm53-exl3/overlay/` in the same commit, only after reading the drift diff the
+build prints.
 
 `vllm-gb10-gate.sh` takes the expected b12x version as its second argument, and nothing in it imports `b12x` or `vllm`: both initialize CUDA on import, so on a GPU-less host they would fail for reasons unrelated to the image. It checks files and metadata only.
 
