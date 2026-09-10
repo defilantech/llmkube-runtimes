@@ -89,6 +89,27 @@ sys.exit("missing: " + ",".join(missing) if missing else 0)
 fi
 echo "PASS: exllamav3_ext exposes all six fused/fat MoE entry points"
 
+# --- 3b. GB10 persistent_topk is disabled --------------------------------------
+# This one is not theoretical. persistent_topk needs >=128KB shared memory per
+# block; GB10 has 101376 B. With it enabled the engine loads all 120 shards,
+# forms TP=2, and then dies inside determine_available_memory, which reads as a
+# late mystery crash rather than an unsupported kernel. The patch that disables
+# it runs at build; this asserts the result on the shipped image, because the
+# patch was absent from the build for a while and every other check stayed green.
+echo "== GB10 persistent_topk disabled =="
+KPOOL="${VLLM_SITE}/model_executor/layers/sparse_attn_indexer_kpool.py"
+if ! run grep -q 'if False and current_platform.is_cuda() and select_k in (512, 1024, 2048)' "${KPOOL}"; then
+  echo "FAIL: persistent_topk is still enabled in ${KPOOL}."
+  echo "      This image dies on a GB10 during determine_available_memory."
+  exit 1
+fi
+if ! run test -f "${VLLM_SITE%/vllm}/glm53_video.pth"; then
+  echo "FAIL: glm53_video.pth is missing; the video placeholder import hook"
+  echo "      will not load in the serving interpreter."
+  exit 1
+fi
+echo "PASS: persistent_topk disabled and the video hook .pth is installed"
+
 # --- 4. License and policy boundary ------------------------------------------
 # The Apache-2.0 story of this image depends on AGPL-era files never appearing.
 # That is testable, so test it on the artifact rather than trusting the build.

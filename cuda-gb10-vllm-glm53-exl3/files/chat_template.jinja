@@ -5,7 +5,14 @@
 {%- set thinking_enabled = true -%}
 {%- endif -%}
 {%- set effective_reasoning_effort = reasoning_effort if reasoning_effort is defined and reasoning_effort in ['low', 'high'] else 'max' -%}
-{%- if effective_reasoning_effort is not none -%}<|system|>Reasoning Effort: {{ effective_reasoning_effort | capitalize }}{%- endif -%}
+{#- LLMKube fix: gate the reasoning-effort hint on thinking_enabled. The line
+    above defaults the effort to 'max' unconditionally, and this emission never
+    consulted thinking_enabled, so a request with enable_thinking=false was
+    still told "Reasoning Effort: Max" while the generation prompt closed the
+    thinking block (<think></think>). The model then reasons inside its answer.
+    Derived independently from the observed template logic; upstream's own fix
+    for this landed after their AGPL-3.0 relicense and is not used here. -#}
+{%- if thinking_enabled and effective_reasoning_effort is not none -%}<|system|>Reasoning Effort: {{ effective_reasoning_effort | capitalize }}{%- endif -%}
 {%- set clear_thinking = clear_thinking if clear_thinking is defined else false -%}
 {%- if tools -%}
 {%- macro tool_to_json(tool) -%}
