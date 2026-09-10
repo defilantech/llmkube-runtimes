@@ -434,6 +434,7 @@ COPY overlay/patch_glm_eagle3.py /opt/glm53/patch_glm_eagle3.py
 COPY overlay/patch_glm5_drafter_group.py /opt/glm53/patch_glm5_drafter_group.py
 COPY tests/test_exl3_overlay.py /opt/glm53/test_exl3_overlay.py
 COPY files/chat_template.jinja /opt/glm53/chat_template.jinja
+COPY tests/test_thinking_off_effort_gate.py /opt/glm53/test_thinking_off_effort_gate.py
 COPY overlay/patch_glm_video_placeholders.py /opt/glm53/patch_glm_video_placeholders.py
 COPY overlay/patch_suppress_stops_in_reasoning.py /opt/glm53/patch_suppress_stops_in_reasoning.py
 COPY tests/test_suppress_stops.py /opt/glm53/test_suppress_stops.py
@@ -453,6 +454,22 @@ RUN python3 /opt/glm53/patch_model_overrides.py
 RUN python3 /opt/glm53/patch_dflash2.py
 RUN python3 /opt/glm53/patch_glm_eagle3.py
 RUN python3 /opt/glm53/patch_glm5_drafter_group.py
+# MUST run, and it was missing until 2026-09-10. Upstream runs this one at
+# CONTAINER START from its launcher, not at build, so porting the build steps
+# alone silently dropped it. Two things it does:
+#
+#   1. installs itself into site-packages plus a glm53_video.pth, so the video
+#      placeholder import hook is active in every interpreter afterwards;
+#   2. disables GB10 persistent_topk in sparse_attn_indexer_kpool.py.
+#
+# Without (2) the engine dies during determine_available_memory with:
+#   launch_persistent_topk ... persistent_topk would oversubscribe and the
+#   FilteredTopK fallback requires >=128KB smem per block (have 101376).
+#   total_ctas=73 > num_sms*occupancy=48
+# GB10 has 99 KB of shared memory per block, so the kernel cannot run here at
+# all. Running it at build is correct AND sufficient because of the .pth.
+RUN python3 /opt/glm53/patch_glm_video_placeholders.py
+
 RUN python3 /opt/glm53/patch_suppress_stops_in_reasoning.py
 RUN python3 /opt/glm53/patch_scheduler_decode_floor.py
 RUN python3 /opt/glm53/patch_hybrid_prefix_hit.py
@@ -470,7 +487,8 @@ RUN EXL3_SELFCHECK_GPU=0 python3 /opt/glm53/test_exl3_overlay.py \
     && python3 /opt/glm53/test_xgrammar_termination.py \
     && python3 /opt/glm53/test_kpool_tail_slotmap.py \
     && python3 /opt/glm53/test_spinwait_patch.py \
-    && python3 /opt/glm53/test_indexer_workspace.py
+    && python3 /opt/glm53/test_indexer_workspace.py \
+    && python3 /opt/glm53/test_thinking_off_effort_gate.py
 
 # Baked by start.sh --build-arg so a git pull that changes overlay/Dockerfile
 # misses this label and rebuilds once. Keep last so stamp-only rebuilds are cheap.
@@ -480,6 +498,27 @@ LABEL glm53.recipe.stamp=${GLM53_RECIPE_STAMP}
 # ---------------------------------------------------------------------------
 # LLMKube additions beyond the upstream MIT recipe.
 # ---------------------------------------------------------------------------
+
+# Assert the GB10 persistent_topk disable actually landed in the file.
+#
+# The patch above raises when its pattern is missing, but it was absent from the
+# build entirely for a while and nothing noticed: the image built clean, passed
+# every gate, and then died on a Spark inside determine_available_memory. Check
+# the artifact, not the exit code of the step that was supposed to produce it.
+RUN <<'EOT'
+set -eu
+kpool=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/sparse_attn_indexer_kpool.py
+if ! grep -q 'if False and current_platform.is_cuda() and select_k in (512, 1024, 2048)' "$kpool"; then
+    echo "FATAL: GB10 persistent_topk is still enabled in $kpool"
+    echo "       This image will die on a GB10 during determine_available_memory:"
+    echo "       persistent_topk needs >=128KB smem/block and GB10 has 101376 B."
+    grep -n 'select_k in (512, 1024, 2048)' "$kpool" || true
+    exit 1
+fi
+[ -f /usr/local/lib/python3.12/dist-packages/glm53_video.pth ] \
+    || { echo "FATAL: glm53_video.pth missing; the video import hook will not load"; exit 1; }
+echo "GB10 guard OK: persistent_topk disabled, video hook .pth installed"
+EOT
 
 # Fail the build if AGPL-era material ever lands in this image. The license
 # boundary is a property we can actually test, so test it rather than rely on
