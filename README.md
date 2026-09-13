@@ -247,9 +247,10 @@ arm64 only. First green build on `ubuntu-24.04-arm`: 30 minutes for the pull_req
 build, cuda-exl3 compile and the serial JIT prewarm dominate; the tag run that also pushes and attests the
 candidate took 39). Tier-2 numbers on the ring, single stream, text only: prefill 1,137 tok/s at 49.7k
 prompt tokens, decode 26.5 tok/s without speculative decoding and 31 to 35 tok/s with DSpark k=5 on prose, up to 65
-on code (tonyd2wild's switch: 25.4 to 26.8 without, 51.5 with). Measured on the candidate
-`@sha256:8899a1285e156849f007848e78ef1cc0d31631664e780be0d53d998edeaa1fa3`. See the LLMKube multi-node guide's
-"Three-Spark ring" section.
+on code (tonyd2wild's switch: 25.4 to 26.8 without, 51.5 with). Measured on candidate
+`@sha256:8899a1285e156849f007848e78ef1cc0d31631664e780be0d53d998edeaa1fa3` and reproduced on the final candidate
+`@sha256:8dab469dd37e28c26612648079eb075eb3152dc2dacd8347c55a6f2aba037b54` (rc4: same vLLM tree, plus the license texts). See
+the LLMKube multi-node guide's "Three-Spark ring" section.
 
 ## Coder agent image
 
