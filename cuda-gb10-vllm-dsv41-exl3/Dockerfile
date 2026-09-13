@@ -71,6 +71,7 @@ RUN python3 /opt/llmkube/build/apply_patches.py /opt/llmkube/patches "$D/vllm" "
       --extra=nvidia_model.py=models/deepseek_v4_1/nvidia/model.py:4df8a4e2
 RUN python3 - <<'PY'
 import importlib.metadata as md
+import torch  # noqa: F401  (loads libc10/libtorch; cuda_exl3._C links against them)
 import cuda_exl3, cuda_exl3._C  # noqa: F401
 eps = {(e.name, e.value) for e in md.entry_points(group="vllm.general_plugins")}
 assert ("cuda_exl3", "cuda_exl3:register") in eps, eps

@@ -16,6 +16,7 @@ def test_flashinfer_is_the_source_build_with_the_ring_shapes():
 
 
 def test_cuda_exl3_kernel_and_plugin_entry_point():
+    import torch  # noqa: F401  (cuda_exl3._C links against libc10)
     import cuda_exl3
     import cuda_exl3._C  # noqa: F401
     from cuda_exl3 import config, moe  # noqa: F401  (bot-lab-21's V4.1 overlay landed here)
