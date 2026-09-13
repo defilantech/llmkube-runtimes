@@ -1,3 +1,4 @@
 sbom.spdx.json
 *.gguf
 build/
+.pytest_cache/

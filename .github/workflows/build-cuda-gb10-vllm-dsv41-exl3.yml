@@ -35,7 +35,7 @@ jobs:
     # aarch64 Grace, the vLLM base publishes no amd64 manifest, and the CUDA
     # extension is compiled here for sm_121. QEMU would not help.
     runs-on: ubuntu-24.04-arm
-    # This image compiles FlashInfer from source and cuda-exl3, then pre-warms two JIT modules; budget an hour on the 4-vCPU arm runner. The ceiling exists so a hung nvcc fails as a timeout.
+    # Measured 2026-09-13: 30 minutes on the 4-vCPU arm runner (FlashInfer source build, cuda-exl3 compile, serial JIT prewarm, in-image tests, gate). The ceiling exists so a hung nvcc fails as a timeout rather than holding the concurrency group.
     timeout-minutes: 300
     permissions:
       contents: read
@@ -74,13 +74,16 @@ jobs:
         run: |
           cd cuda-gb10-vllm-dsv41-exl3
           fail=0
-          for f in LICENSE.tonyd2wild-MIT LICENSE.cuda-exl3-MIT NOTICE; do
+          for f in LICENSE.tonyd2wild-MIT LICENSE.cuda-exl3-MIT LICENSE.cutlass-BSD-3-Clause LICENSE.spdlog-MIT LICENSE.cccl-Apache-2.0-LLVM NOTICE; do
             [ -f "$f" ] || { echo "FAIL: $f missing; MIT requires the notice to travel."; fail=1; }
           done
           for f in LICENSE.tonyd2wild-MIT LICENSE.cuda-exl3-MIT; do
             [[ "$(head -1 "$f")" == "MIT License"* ]] || { echo "FAIL: $f is not the MIT text."; fail=1; }
           done
-          if grep -rl 'GNU AFFERO' patches build tests 2>/dev/null | grep -q .; then
+          grep -q 'Redistribution and use in source and binary forms' LICENSE.cutlass-BSD-3-Clause || { echo "FAIL: LICENSE.cutlass-BSD-3-Clause is not the BSD-3-Clause text."; fail=1; }
+          grep -q 'MIT License' LICENSE.spdlog-MIT || { echo "FAIL: LICENSE.spdlog-MIT is not the MIT text."; fail=1; }
+          grep -q 'Apache License' LICENSE.cccl-Apache-2.0-LLVM || { echo "FAIL: LICENSE.cccl-Apache-2.0-LLVM is not the Apache text."; fail=1; }
+          if grep -rli 'GNU AFFERO' patches build tests 2>/dev/null | grep -q .; then
             echo "FAIL: AGPL text found in vendored material."; fail=1
           fi
           python3 -m venv /tmp/pyt && /tmp/pyt/bin/pip install -q pytest
@@ -144,9 +147,9 @@ jobs:
         if: always()
         run: df -h /
 
-      # Re-asserts the Dockerfile's guards on the SHIPPED image and drives the
-      # behavioural ones (ABLIT refusal, stamp agreement) rather than reading
-      # them. See the script for why nothing here launches a CUDA kernel.
+      # The gate re-asserts the Dockerfile's guarantees on the SHIPPED image: receipt, stamp and all five license texts
+      # present, FlashInfer 0.7.0rc1 with the AOT/cubin packages gone, both prewarmed JIT objects, cuda_exl3 loadable,
+      # the patched tree, the entrypoint's tree-digest verification, and the in-image test suites.
       - name: Tier-1 gate (FlashInfer 0.7.0rc1; cuda-exl3; pinned tree; in-image tests)
         run: ./scripts/vllm-gb10-dsv41-exl3-gate.sh "${{ env.LOCAL }}"
 

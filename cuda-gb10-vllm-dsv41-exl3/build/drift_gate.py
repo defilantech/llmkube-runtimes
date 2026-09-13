@@ -27,6 +27,8 @@ def load_baseline(path: Path) -> dict[str, str]:
 
 
 def check(site: Path, baseline: dict[str, str]) -> list[str]:
+    if not site.is_dir():
+        return [f"{site}: not a directory (is the base image's dist-packages path still /usr/local/lib/python3.12?)"]
     errors: list[str] = []
     for rel, want in baseline.items():
         p = site / rel

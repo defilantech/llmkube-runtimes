@@ -29,6 +29,10 @@ RUN python3 /opt/llmkube/build/drift_gate.py "$D/vllm" /opt/llmkube/patches/MD5S
 
 # ---- 5.2 FlashInfer 0.7.0rc1 from source, in place ----
 RUN pip uninstall -y -q flashinfer-jit-cache flashinfer-cubin flashinfer-python || true
+# The base's vLLM was built against FlashInfer 0.6.18 and checks the installed version at import; 0.7.0rc1 is what the
+# SM12x sparse-MLA decode shapes need, so the check is disabled. VLLM_HAS_FLASHINFER_CUBIN=1 keeps vLLM's cubin-backed
+# FlashInfer paths enabled: 0.7.0rc1 fetches cubins on demand into FLASHINFER_CUBIN_DIR at first use, so the pinned
+# 0.6.18 flashinfer-cubin package is uninstalled above rather than kept.
 ENV VLLM_HAS_FLASHINFER_CUBIN=1 FLASHINFER_DISABLE_VERSION_CHECK=1
 RUN <<'EOT'
 set -eu
@@ -84,13 +88,13 @@ PY
 # 79.5 GiB of pinned weights). Serial is slower and always fits.
 ENV FLASHINFER_WORKSPACE_BASE=/opt/llmkube/flashinfer-jit \
     TORCH_CUDA_ARCH_LIST=12.1a FLASHINFER_CUDA_ARCH_LIST=12.1a FLASHINFER_NVCC_THREADS=1 MAX_JOBS=1
-RUN mkdir -p /opt/llmkube/flashinfer-jit && python3 /opt/llmkube/build/prewarm.py && chmod -R a+rwX /opt/llmkube/flashinfer-jit
+RUN mkdir -p /opt/llmkube/flashinfer-jit && python3 /opt/llmkube/build/prewarm.py && find /opt/llmkube/flashinfer-jit -type d -exec chmod a+rwx {} + && find /opt/llmkube/flashinfer-jit -type f -exec chmod a+r {} +
 
 # ---- 6 in-image tests ----
-RUN pip install -q pytest && python3 -m pytest -q /opt/llmkube/tests
+RUN pip install -q pytest && DSV41_IN_IMAGE=1 python3 -m pytest -q /opt/llmkube/tests
 
 # ---- 5.6 receipts, attribution, entrypoint ----
-COPY NOTICE LICENSE.tonyd2wild-MIT LICENSE.cuda-exl3-MIT /opt/llmkube/
+COPY NOTICE LICENSE.tonyd2wild-MIT LICENSE.cuda-exl3-MIT LICENSE.cutlass-BSD-3-Clause LICENSE.spdlog-MIT LICENSE.cccl-Apache-2.0-LLVM /opt/llmkube/
 RUN bash /opt/llmkube/build/receipt.sh
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/dsv41-entrypoint.sh
 
