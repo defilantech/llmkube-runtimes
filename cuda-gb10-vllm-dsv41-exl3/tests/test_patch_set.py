@@ -12,7 +12,7 @@ def md5_prefix(p: Path) -> str:
 
 def test_every_listed_file_matches_md5sums():
     lines = [l.split() for l in (PATCHES / "MD5SUMS.txt").read_text().splitlines() if l.strip()]
-    assert len(lines) == 15, lines
+    assert len(lines) == 14, lines
     for want, name in lines:
         assert md5_prefix(PATCHES / name) == want, name
 
