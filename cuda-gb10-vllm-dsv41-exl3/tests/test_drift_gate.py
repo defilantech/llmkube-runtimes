@@ -41,6 +41,11 @@ def test_fail_when_an_expected_file_is_missing(tmp_path):
     assert errors and "missing" in errors[0]
 
 
+def test_fail_when_site_dir_is_missing(tmp_path):
+    errors = drift_gate.check(tmp_path / "nope", {"a.py": "0a0a0a0a"})
+    assert len(errors) == 1 and "not a directory" in errors[0]
+
+
 def test_load_baseline_skips_comments_and_blank_lines(tmp_path):
     f = tmp_path / "b.txt"
     f.write_text("# c\n\nfce421c9  v1/x.py\nABSENT    v1/y.py\n")

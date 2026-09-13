@@ -24,7 +24,7 @@ def test_cuda_exl3_kernel_and_plugin_entry_point():
     assert ("cuda_exl3", "cuda_exl3:register") in eps
 
 
-def test_patched_vllm_tree_imports_and_is_the_pinned_tree():
+def test_patched_vllm_tree_imports_and_has_no_base_engram():
     mods = [
         "vllm.models.deepseek_v4_1.attention",
         "vllm.models.deepseek_v4_1.virtual_heads",

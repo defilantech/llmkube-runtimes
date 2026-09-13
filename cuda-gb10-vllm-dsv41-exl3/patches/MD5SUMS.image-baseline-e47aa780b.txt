@@ -16,4 +16,4 @@ c2d2fb89  models/deepseek_v4_1/nvidia/vl_model.py
 d9874206  models/deepseek_v4/nvidia/model.py
 35d0e4f0  models/deepseek_v4_1/nvidia/model.py
 ABSENT    models/deepseek_v4_1/virtual_heads.py
-# (pin 27f27c33 for common/engram.py; pin 4df8a4e2 for nvidia/model.py)
+# (27f27c33 is the md5 prefix of tonyd2wild's engram.py at fc725ecf, recorded for reference; 4df8a4e2 is the md5 prefix of the vendored nvidia_model.py and is enforced by apply_patches --extra and test_patch_set.py)
