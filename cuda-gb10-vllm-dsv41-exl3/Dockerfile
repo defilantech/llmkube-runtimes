@@ -4,7 +4,7 @@
 # across three Sparks cabled in a ring (TP4 on a switch uses the same image).
 #
 # Built from the OFFICIAL vLLM base pinned by digest plus overlays pinned by SHA. Every vendored file is
-# MIT or Apache-2.0; nothing AGPL. Read SPEC-runtimes-image.md (llmkube-internal) for the why.
+# MIT, BSD-3-Clause (cutlass) or Apache-2.0; nothing AGPL. Read SPEC-runtimes-image.md (llmkube-internal) for the why.
 #
 #   base       vllm/vllm-openai deepseekv41-flash-0909-arm64      Apache-2.0
 #   FlashInfer flashinfer-ai/flashinfer 07869c61 (v0.7.0rc1)      Apache-2.0   replaces 0.6.18 in place
@@ -29,15 +29,16 @@ RUN python3 /opt/llmkube/build/drift_gate.py "$D/vllm" /opt/llmkube/patches/MD5S
 
 # ---- 5.2 FlashInfer 0.7.0rc1 from source, in place ----
 RUN pip uninstall -y -q flashinfer-jit-cache flashinfer-cubin flashinfer-python || true
+ENV VLLM_HAS_FLASHINFER_CUBIN=1 FLASHINFER_DISABLE_VERSION_CHECK=1
 RUN <<'EOT'
 set -eu
 FI=07869c61ba581e6d6b8ad8d142f4a6c89b707cc1; CUT=b46b16d003484063bca4ed365e44095c4c6ed633
 CCCL=16bd510c9b712e82b0ab6cbb630d8e29ba1f7116; SPD=c3aed4b68373955e1cc94307683d44dca1515d2b
 mkdir -p /opt/fi-src/3rdparty/cutlass /opt/fi-src/3rdparty/cccl /opt/fi-src/3rdparty/spdlog
-curl -sSL -m 900 "https://codeload.github.com/flashinfer-ai/flashinfer/tar.gz/$FI" | tar xz -C /opt/fi-src --strip-components=1
-curl -sSL -m 900 "https://codeload.github.com/NVIDIA/cutlass/tar.gz/$CUT" | tar xz -C /opt/fi-src/3rdparty/cutlass --strip-components=1
-curl -sSL -m 900 "https://codeload.github.com/NVIDIA/cccl/tar.gz/$CCCL" | tar xz -C /opt/fi-src/3rdparty/cccl --strip-components=1
-curl -sSL -m 900 "https://codeload.github.com/gabime/spdlog/tar.gz/$SPD" | tar xz -C /opt/fi-src/3rdparty/spdlog --strip-components=1
+curl -fsSL -m 900 "https://codeload.github.com/flashinfer-ai/flashinfer/tar.gz/$FI" | tar xz -C /opt/fi-src --strip-components=1
+curl -fsSL -m 900 "https://codeload.github.com/NVIDIA/cutlass/tar.gz/$CUT" | tar xz -C /opt/fi-src/3rdparty/cutlass --strip-components=1
+curl -fsSL -m 900 "https://codeload.github.com/NVIDIA/cccl/tar.gz/$CCCL" | tar xz -C /opt/fi-src/3rdparty/cccl --strip-components=1
+curl -fsSL -m 900 "https://codeload.github.com/gabime/spdlog/tar.gz/$SPD" | tar xz -C /opt/fi-src/3rdparty/spdlog --strip-components=1
 ls /opt/fi-src/3rdparty/cutlass/include/cutlass/cutlass.h /opt/fi-src/3rdparty/cccl/README.md /opt/fi-src/3rdparty/spdlog/include/spdlog/spdlog.h >/dev/null
 cd /opt/fi-src
 BUILD_NVEP=0 FLASHINFER_BUILD_NO_PIP=1 MAX_JOBS="${MAX_JOBS}" pip install --no-deps --no-build-isolation -q .
@@ -53,14 +54,13 @@ for h in (16, 24, 32):
 print("flashinfer 0.7.0rc1 with TP2/TP3/TP4 sparse-MLA decode shapes")
 PY
 EOT
-ENV VLLM_HAS_FLASHINFER_CUBIN=1 FLASHINFER_DISABLE_VERSION_CHECK=1
 
 # ---- 5.3 cuda-exl3 for sm_121a, then bot-lab-21's V4.1 overlay on top ----
 RUN <<'EOT'
 set -eu
 SHA=6a1ffc34866e23f484574ce1922a8bca93eb33b2
 mkdir -p /opt/exl3-src
-curl -sSL -m 600 "https://codeload.github.com/Zeuss5/cuda-exl3/tar.gz/$SHA" | tar xz -C /opt/exl3-src --strip-components=1
+curl -fsSL -m 600 "https://codeload.github.com/Zeuss5/cuda-exl3/tar.gz/$SHA" | tar xz -C /opt/exl3-src --strip-components=1
 cd /opt/exl3-src
 TORCH_CUDA_ARCH_LIST=12.1a MAX_JOBS="${MAX_JOBS}" pip install --no-deps --no-build-isolation -q .
 cd / && rm -rf /opt/exl3-src
