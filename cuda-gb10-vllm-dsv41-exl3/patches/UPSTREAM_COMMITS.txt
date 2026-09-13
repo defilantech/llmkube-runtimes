@@ -1,0 +1,4 @@
+tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark patch/exl3-tp3 fc725ecf10869c184f4347dd73336536d395753c
+vllm-project/vllm vllm/models/deepseek_v4_1/nvidia/model.py e47aa780bccf59f59dfa2cbb18e17a10b4fe69ba
+Zeuss5/cuda-exl3 6a1ffc34866e23f484574ce1922a8bca93eb33b2
+flashinfer-ai/flashinfer 07869c61ba581e6d6b8ad8d142f4a6c89b707cc1
