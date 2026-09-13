@@ -79,8 +79,11 @@ print("cuda_exl3 kernel loads; vllm.general_plugins registers cuda_exl3:register
 PY
 
 # ---- 5.5 prewarm the JIT modules under the runtime env ----
+# MAX_JOBS=1 here and in the shipped env: the mxfp8 cutlass GEMM compiles six variants and each nvcc front end
+# takes ~6 GB of host RAM, so four in parallel exceed the 16 GB arm runner (and, on a serving node, sit on top of
+# 79.5 GiB of pinned weights). Serial is slower and always fits.
 ENV FLASHINFER_WORKSPACE_BASE=/opt/llmkube/flashinfer-jit \
-    TORCH_CUDA_ARCH_LIST=12.1a FLASHINFER_CUDA_ARCH_LIST=12.1a FLASHINFER_NVCC_THREADS=1 MAX_JOBS=4
+    TORCH_CUDA_ARCH_LIST=12.1a FLASHINFER_CUDA_ARCH_LIST=12.1a FLASHINFER_NVCC_THREADS=1 MAX_JOBS=1
 RUN mkdir -p /opt/llmkube/flashinfer-jit && python3 /opt/llmkube/build/prewarm.py && chmod -R a+rwX /opt/llmkube/flashinfer-jit
 
 # ---- 6 in-image tests ----
