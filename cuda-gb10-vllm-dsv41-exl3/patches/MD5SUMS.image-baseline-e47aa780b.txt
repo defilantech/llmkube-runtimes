@@ -1,0 +1,19 @@
+# MD5 prefixes of the files the build OVERWRITES, as found in the pinned base image
+# vllm/vllm-openai@sha256:d84a1232... (vLLM 0.1.dev20904+g179dd0fa9), measured 2026-09-13.
+# Paths are relative to the vllm package. Nine equal vLLM e47aa780b; the two marked (pin ...)
+# differ from it by exactly the DP-shared Engram feature, which tonyd2wild's engram.py and the
+# vendored nvidia_model.py remove again. A mismatch here means the base moved: re-derive the
+# patch set deliberately, re-record this file, and re-run Tier 2. Never widen silently.
+fce421c9  v1/attention/backends/mla/sparse_swa.py
+e457d429  models/deepseek_v4_1/nvidia/flashinfer_sparse.py
+9a3b8cd9  models/deepseek_v4_1/common/engram.py
+b30ad5de  model_executor/model_loader/weight_utils.py
+c4c88dc0  models/deepseek_v4_1/nvidia/model_state.py
+5e66bb96  model_executor/layers/sparse_attn_indexer.py
+7d3fac5b  models/deepseek_v4_1/attention.py
+a2805489  model_executor/layers/vocab_parallel_embedding.py
+c2d2fb89  models/deepseek_v4_1/nvidia/vl_model.py
+d9874206  models/deepseek_v4/nvidia/model.py
+35d0e4f0  models/deepseek_v4_1/nvidia/model.py
+ABSENT    models/deepseek_v4_1/virtual_heads.py
+# (pin 27f27c33 for common/engram.py; pin 4df8a4e2 for nvidia/model.py)
