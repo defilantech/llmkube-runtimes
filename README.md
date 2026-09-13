@@ -246,8 +246,10 @@ all-reduce, versus 11.3 on a single two-node leg.
 arm64 only. First green build on `ubuntu-24.04-arm`: 30 minutes for the pull_request run (FlashInfer source
 build, cuda-exl3 compile and the serial JIT prewarm dominate; the tag run that also pushes and attests the
 candidate took 39). Tier-2 numbers on the ring, single stream, text only: prefill 1,137 tok/s at 49.7k
-prompt tokens, decode 26.5 tok/s without speculative decoding and 34 tok/s with DSpark k=5 (tonyd2wild's
-switch: 25.4 to 26.8 and 51.5). See the LLMKube multi-node guide's "Three-Spark ring" section.
+prompt tokens, decode 26.5 tok/s without speculative decoding and 31 to 35 tok/s with DSpark k=5 on prose, up to 65
+on code (tonyd2wild's switch: 25.4 to 26.8 without, 51.5 with). Measured on the candidate
+`@sha256:8899a1285e156849f007848e78ef1cc0d31631664e780be0d53d998edeaa1fa3`. See the LLMKube multi-node guide's
+"Three-Spark ring" section.
 
 ## Coder agent image
 
