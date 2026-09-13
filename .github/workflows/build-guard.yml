@@ -25,6 +25,7 @@ on:
       - 'cuda-gb10/**'
       - 'cuda-gb10-turbo/**'
       - 'cuda-gb10-vllm-glm53-exl3/**'
+      - 'cuda-gb10-vllm-dsv41-exl3/**'
       - 'scripts/**'
       - '.github/workflows/build.yml'
       - '.github/workflows/build-coder.yml'
@@ -33,6 +34,7 @@ on:
       - '.github/workflows/build-cuda-gb10.yml'
       - '.github/workflows/build-cuda-gb10-turbo.yml'
       - '.github/workflows/build-cuda-gb10-vllm-glm53-exl3.yml'
+      - '.github/workflows/build-cuda-gb10-vllm-dsv41-exl3.yml'
 
 permissions:
   contents: read
