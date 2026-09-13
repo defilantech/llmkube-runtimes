@@ -21,7 +21,9 @@ cuda-exl3            MIT          https://github.com/Zeuss5/cuda-exl3   commit 6
                                   License reproduced in LICENSE.cuda-exl3-MIT. Trellis bit packing, procedural
                                   codebook and mma layout follow ExLlamaV3 (MIT, turboderp).
 FlashInfer           Apache-2.0   https://github.com/flashinfer-ai/flashinfer   commit 07869c61ba581e6d6b8ad8d142f4a6c89b707cc1
-                                  with NVIDIA/cutlass b46b16d0…, NVIDIA/cccl 16bd510c…, gabime/spdlog c3aed4b6…
+NVIDIA/cutlass       BSD-3-Clause https://github.com/NVIDIA/cutlass   commit b46b16d003484063bca4ed365e44095c4c6ed633 (headers built into FlashInfer)
+NVIDIA/cccl          Apache-2.0 WITH LLVM-exception   https://github.com/NVIDIA/cccl   commit 16bd510c9b712e82b0ab6cbb630d8e29ba1f7116
+gabime/spdlog        MIT          https://github.com/gabime/spdlog    commit c3aed4b68373955e1cc94307683d44dca1515d2b
 
 Base image
 ----------
