@@ -1,0 +1,36 @@
+NOTICE for llmkube-vllm-cuda-gb10-dsv41-exl3
+=============================================
+
+This runtime image is Apache-2.0 (the llmkube-runtimes repository license) and incorporates
+third-party material under the licenses below. Attribution is a condition of those licenses.
+
+Vendored material (cuda-gb10-vllm-dsv41-exl3/patches/)
+------------------------------------------------------
+tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark, directory patch/exl3-tp3, commit
+fc725ecf10869c184f4347dd73336536d395753c. MIT License, reproduced in LICENSE.tonyd2wild-MIT.
+Includes Kai's Engram-on-disk and SM12x page-size patches (credited in that repository) and
+bot-lab-21's DeepSeek-V4.1 overlay for cuda-exl3 (exl3_config.py, exl3_moe.py; MIT, published in
+bot-lab-21/DeepSeek-V4.1-Flash-EXL3-3.5bpw-Pollard).
+
+vllm-project/vllm, file vllm/models/deepseek_v4_1/nvidia/model.py at commit
+e47aa780bccf59f59dfa2cbb18e17a10b4fe69ba. Apache License 2.0.
+
+Build-time dependencies compiled from source
+--------------------------------------------
+cuda-exl3            MIT          https://github.com/Zeuss5/cuda-exl3   commit 6a1ffc34866e23f484574ce1922a8bca93eb33b2
+                                  License reproduced in LICENSE.cuda-exl3-MIT. Trellis bit packing, procedural
+                                  codebook and mma layout follow ExLlamaV3 (MIT, turboderp).
+FlashInfer           Apache-2.0   https://github.com/flashinfer-ai/flashinfer   commit 07869c61ba581e6d6b8ad8d142f4a6c89b707cc1
+                                  with NVIDIA/cutlass b46b16d0…, NVIDIA/cccl 16bd510c…, gabime/spdlog c3aed4b6…
+
+Base image
+----------
+vLLM                 Apache-2.0   vllm/vllm-openai:deepseekv41-flash-0909-arm64, pinned by digest in the Dockerfile.
+
+Ideas credited without code reuse
+---------------------------------
+zyang-dev and NVIDIA (subnet-aware IB routing in NCCL, used at serve time via NCCL_IB_SUBNET_AWARE_ROUTING);
+LibertAI (the 2x GB10 REAP-256E lane and the FlashInfer AOT trap).
+
+Model artifacts are NOT in this image. bot-lab-21/DeepSeek-V4.1-Flash-EXL3-3.5bpw-Pollard and
+deepseek-ai/DeepSeek-V4.1-Flash are MIT and are staged by the InferenceService.
