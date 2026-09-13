@@ -327,6 +327,21 @@ Bump the base by editing the `FROM` digest in `cuda-gb10-vllm-glm53-exl3/Dockerf
 `cuda-gb10-vllm-glm53-exl3/overlay/` in the same commit, only after reading the drift diff the
 build prints.
 
+```bash
+# GB10 vLLM DeepSeek-V4.1-Flash EXL3 (arm64 only; three-Spark ring; compiles FlashInfer + cuda-exl3)
+docker build --build-arg MAX_JOBS=1 -t llmkube-vllm-cuda-gb10-dsv41-exl3:dev cuda-gb10-vllm-dsv41-exl3/
+./scripts/vllm-gb10-dsv41-exl3-gate.sh llmkube-vllm-cuda-gb10-dsv41-exl3:dev
+```
+
+`MAX_JOBS=1` unless the host has more than 8 GB of RAM per parallel nvcc; the mxfp8 cutlass GEMM
+prewarm needs about 6 GB per front end.
+
+Bumping the base for `cuda-gb10-vllm-dsv41-exl3` means editing `ARG BASE` in the Dockerfile and
+`BASE_DIGEST` in the workflow together, re-recording `patches/MD5SUMS.image-baseline-e47aa780b.txt`
+against the new base (the drift gate will name every file that moved), and re-running the Tier-2
+ring boot; the in-image `test_import_smoke` asserts the base's DP-Engram `engram.py` did not
+survive the overlay.
+
 `vllm-gb10-gate.sh` takes the expected b12x version as its second argument, and nothing in it imports `b12x` or `vllm`: both initialize CUDA on import, so on a GPU-less host they would fail for reasons unrelated to the image. It checks files and metadata only.
 
 `cuda-gate.sh` rather than `tier1-gate.sh`: a GPU-less host legitimately produces a CUDA backend load error (no device for `cuInit`), which `tier1-gate.sh` treats as failure. The CUDA gate allowlists exactly that one case, and additionally asserts the shipped image carries native `sm_121`.
