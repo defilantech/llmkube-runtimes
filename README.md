@@ -215,6 +215,43 @@ the extension is compiled for `sm_121`. Measured on the first green build: the w
 free on the runner. Build parallelism still has to be capped at `nproc` because the runner has
 4 vCPU and 16 GB, where upstream's fixed `MAX_JOBS=8` would be OOM-killed.
 
+## GB10 vLLM DeepSeek-V4.1-Flash EXL3 runtime (three-Spark ring)
+
+`ghcr.io/defilantech/llmkube-vllm-cuda-gb10-dsv41-exl3` (`cuda-gb10-vllm-dsv41-exl3/`) serves
+[DeepSeek-V4.1-Flash EXL3 3.5bpw](https://huggingface.co/bot-lab-21/DeepSeek-V4.1-Flash-EXL3-3.5bpw-Pollard)
+(552B MoE, routed experts EXL3, everything else the official FP8/MXFP4 release) at tensor-parallel 3
+across **three** DGX Sparks cabled in a ring, 79.5 GiB of weights per Spark (82.5 with the DSpark drafter) with
+the 203 GB Engram tables read from NVMe. The same image serves TP4 on a switch.
+
+**What it adds to the official base.** FlashInfer 0.7.0rc1 rebuilt from source in place (the base's 0.6.18
+lacks the SM12x sparse-MLA decode shapes), cuda-exl3 compiled for sm_121a, and tonyd2wild's TP3 patch set
+(virtual heads 64->72 so 64 heads split three ways, a vocab pad to a multiple of lcm(64, tp), Engram tables
+read from disk, a streaming loader, and the DSpark drafter's divisibility relaxation) copied over
+`dist-packages` behind a drift gate: if a future base moves any of the eleven files the overlay replaces,
+the build stops and names them. The FlashInfer modules the first serve needs (`sparse_mla_sm120`,
+`mxfp8_gemm_cutlass_sm120`) are JIT-compiled at build under the runtime env, because compiling a cutlass
+GEMM on the serving node costs about 6 GB of host RAM per nvcc process on top of the weights. Two in-image
+test suites prove the assembled tree without a GPU.
+
+**Every layer is pinned and none is AGPL**: the base by digest, FlashInfer/cuda-exl3/the patch set/one
+vLLM file by SHA (see `NOTICE`). Serving needs three checkpoint-side steps the image deliberately does
+not bake: all 54 files local on each member, the TP3 `config.json` edit, and a page-cache drop before the
+group boots; the LLMKube samples ship those as Jobs. Turn swap off on the members first.
+
+**The ring itself** needs `NCCL_IB_SUBNET_AWARE_ROUTING=1` with all four ConnectX ports listed (upstream
+NCCL >= 2.30, which the base carries): NCCL otherwise pairs NICs by channel index on both ends of a link,
+which a P0->P1 ring can never satisfy. Measured 2026-09-13: 23.2 GB/s bus bandwidth on a three-rank
+all-reduce, versus 11.3 on a single two-node leg.
+
+arm64 only. First green build on `ubuntu-24.04-arm`: 30 minutes for the pull_request run (FlashInfer source
+build, cuda-exl3 compile and the serial JIT prewarm dominate; the tag run that also pushes and attests the
+candidate took 39). Tier-2 numbers on the ring, single stream, text only: prefill 1,137 tok/s at 49.7k
+prompt tokens, decode 26.5 tok/s without speculative decoding and 31 to 35 tok/s with DSpark k=5 on prose, up to 65
+on code (tonyd2wild's switch: 25.4 to 26.8 without, 51.5 with). Measured on candidate
+`@sha256:8899a1285e156849f007848e78ef1cc0d31631664e780be0d53d998edeaa1fa3` and reproduced on the final candidate
+`@sha256:8dab469dd37e28c26612648079eb075eb3152dc2dacd8347c55a6f2aba037b54` (rc4: same vLLM tree, plus the license texts). See
+the LLMKube multi-node guide's "Three-Spark ring" section.
+
 ## Coder agent image
 
 `ghcr.io/defilantech/llmkube-foreman-agent-coder` — a Foreman agent that can run its own coder gate.
@@ -290,6 +327,21 @@ Bump the base by editing the `FROM` digest in `cuda-gb10-vllm-glm53-exl3/Dockerf
 `BASE_DIGEST` in the workflow together; a build fails if they disagree. Refresh
 `cuda-gb10-vllm-glm53-exl3/overlay/` in the same commit, only after reading the drift diff the
 build prints.
+
+```bash
+# GB10 vLLM DeepSeek-V4.1-Flash EXL3 (arm64 only; three-Spark ring; compiles FlashInfer + cuda-exl3)
+docker build --build-arg MAX_JOBS=1 -t llmkube-vllm-cuda-gb10-dsv41-exl3:dev cuda-gb10-vllm-dsv41-exl3/
+./scripts/vllm-gb10-dsv41-exl3-gate.sh llmkube-vllm-cuda-gb10-dsv41-exl3:dev
+```
+
+`MAX_JOBS=1` unless the host has more than 8 GB of RAM per parallel nvcc; the mxfp8 cutlass GEMM
+prewarm needs about 6 GB per front end.
+
+Bumping the base for `cuda-gb10-vllm-dsv41-exl3` means editing `ARG BASE` in the Dockerfile and
+`BASE_DIGEST` in the workflow together, re-recording `patches/MD5SUMS.image-baseline-e47aa780b.txt`
+against the new base (the drift gate will name every file that moved), and re-running the Tier-2
+ring boot; the in-image `test_import_smoke` asserts the base's DP-Engram `engram.py` did not
+survive the overlay.
 
 `vllm-gb10-gate.sh` takes the expected b12x version as its second argument, and nothing in it imports `b12x` or `vllm`: both initialize CUDA on import, so on a GPU-less host they would fail for reasons unrelated to the image. It checks files and metadata only.
 

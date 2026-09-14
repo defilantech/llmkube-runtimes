@@ -1,0 +1,218 @@
+{
+ "quant_method": "exl3",
+ "version": "dsv41-routeB-3p5",
+ "bits": 4,
+ "head_bits": 16,
+ "codebook": "mul1",
+ "out_scales": "always",
+ "expert_bits": {
+  "0": {
+   "gu": 4,
+   "down": 4
+  },
+  "1": {
+   "gu": 4,
+   "down": 4
+  },
+  "2": {
+   "gu": 4,
+   "down": 4
+  },
+  "3": {
+   "gu": 4,
+   "down": 4
+  },
+  "4": {
+   "gu": 4,
+   "down": 4
+  },
+  "5": {
+   "gu": 4,
+   "down": 4
+  },
+  "6": {
+   "gu": 4,
+   "down": 4
+  },
+  "7": {
+   "gu": 4,
+   "down": 4
+  },
+  "8": {
+   "gu": 4,
+   "down": 4
+  },
+  "9": {
+   "gu": 4,
+   "down": 4
+  },
+  "10": {
+   "gu": 4,
+   "down": 4
+  },
+  "11": {
+   "gu": 4,
+   "down": 4
+  },
+  "12": {
+   "gu": 4,
+   "down": 4
+  },
+  "13": {
+   "gu": 4,
+   "down": 4
+  },
+  "14": {
+   "gu": 4,
+   "down": 4
+  },
+  "15": {
+   "gu": 3,
+   "down": 3
+  },
+  "16": {
+   "gu": 4,
+   "down": 4
+  },
+  "17": {
+   "gu": 4,
+   "down": 4
+  },
+  "18": {
+   "gu": 4,
+   "down": 4
+  },
+  "19": {
+   "gu": 3,
+   "down": 3
+  },
+  "20": {
+   "gu": 3,
+   "down": 4
+  },
+  "21": {
+   "gu": 4,
+   "down": 4
+  },
+  "22": {
+   "gu": 3,
+   "down": 4
+  },
+  "23": {
+   "gu": 3,
+   "down": 3
+  },
+  "24": {
+   "gu": 3,
+   "down": 4
+  },
+  "25": {
+   "gu": 3,
+   "down": 3
+  },
+  "26": {
+   "gu": 3,
+   "down": 3
+  },
+  "27": {
+   "gu": 3,
+   "down": 3
+  },
+  "28": {
+   "gu": 3,
+   "down": 3
+  },
+  "29": {
+   "gu": 3,
+   "down": 3
+  },
+  "30": {
+   "gu": 3,
+   "down": 3
+  },
+  "31": {
+   "gu": 3,
+   "down": 3
+  },
+  "32": {
+   "gu": 3,
+   "down": 3
+  },
+  "33": {
+   "gu": 3,
+   "down": 3
+  },
+  "34": {
+   "gu": 3,
+   "down": 3
+  },
+  "35": {
+   "gu": 3,
+   "down": 3
+  },
+  "36": {
+   "gu": 3,
+   "down": 3
+  },
+  "37": {
+   "gu": 3,
+   "down": 3
+  },
+  "38": {
+   "gu": 3,
+   "down": 3
+  },
+  "39": {
+   "gu": 3,
+   "down": 3
+  }
+ },
+ "quantized_modules": "layers.N.ffn.experts.E.{w1,w3,w2} only; every other tensor is the original checkpoint's",
+ "original_quantization_config": {
+  "quant_method": "fp8",
+  "activation_scheme": "dynamic",
+  "weight_block_size": [
+   32,
+   32
+  ],
+  "scale_fmt": "ue8m0",
+  "expert_dtype": "fp4"
+ },
+ "tensor_storage": {
+  "layers.0.ffn.experts.0.w1": {
+   "stored_tensors": {
+    "layers.0.ffn.experts.0.w1.trellis": {
+     "shape": [
+      320,
+      144,
+      64
+     ],
+     "n_bytes": 5898240,
+     "dtype": "torch.int16"
+    },
+    "layers.0.ffn.experts.0.w1.suh": {
+     "shape": [
+      5120
+     ],
+     "n_bytes": 10240,
+     "dtype": "torch.float16"
+    },
+    "layers.0.ffn.experts.0.w1.svh": {
+     "shape": [
+      2304
+     ],
+     "n_bytes": 4608,
+     "dtype": "torch.float16"
+    },
+    "layers.0.ffn.experts.0.w1.mul1": {
+     "shape": [],
+     "n_bytes": 4,
+     "dtype": "torch.int32"
+    }
+   },
+   "quant_format": "exl3",
+   "bits_per_weight": 4,
+   "mul1_multiplier": 2212286765
+  }
+ }
+}
