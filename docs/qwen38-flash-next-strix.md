@@ -80,6 +80,10 @@ endpoint is proven, with the env var set.
 
 ```yaml
 runtime: llamacpp
+# First tagged candidate: `git tag vulkan-qwen4exp-v0.1.0` on the merge commit
+# 22e39256260ec451a38bc9b8ee5f02ad545fa687. Serving manifests pin the digest,
+# which for that tag is
+# sha256:632986cc7ae831c6302b6e73ef4fc5bbe9069c6486d68a333f16ec4575d63ae5.
 image: ghcr.io/defilantech/llmkube-llama-vulkan-qwen4exp:candidate-<sha>
 modelRef: qwen38-flash-next-strix
 nodeSelector: {accelerator: amd}
