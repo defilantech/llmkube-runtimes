@@ -1,0 +1,52 @@
+NOTICE for llmkube-llama-vulkan-qwen4exp
+======================================
+
+This runtime image is Apache-2.0 (the llmkube-runtimes repository license) and
+incorporates MIT-licensed upstream material. Attribution below is a condition
+of that license, not a courtesy.
+
+Unlike cuda-gb10-vllm-glm53-exl3, nothing here crosses a license boundary.
+Every vendored byte is llama.cpp, which is MIT throughout, and the patch is a
+contribution to llama.cpp itself rather than code from a separate project.
+
+
+Vendored MIT material
+---------------------
+
+    llama.cpp
+    https://github.com/ggml-org/llama.cpp
+    tag b10794, commit f9f09f02cc44d87d842dbd2d578857d92d4bb63b
+    Copyright (c) 2023-2026 The ggml authors
+    MIT License, reproduced in LICENSE.upstream-MIT
+
+    patches/0001-qwen4exp-mtp.patch
+    The cumulative diff of ggml-org/llama.cpp pull request #28243,
+    "models: Qwen3.8-Flash-Next MTP", author danielhanchen, 11 commits,
+    19 files, +401/-73, last updated 2026-09-10.
+    https://github.com/ggml-org/llama.cpp/pull/28243
+    Differs from the tag above only by this patch, and applies cleanly to it:
+    the tag is the commit the pull request was authored against.
+
+
+Build-time dependencies
+-----------------------
+
+    ubuntu:26.04         pinned by digest in the Dockerfile
+    libvulkan1           distro package, RADV (mesa-vulkan-drivers)
+
+
+Model artifacts, which this image does NOT contain
+--------------------------------------------------
+
+The image ships no weights. The artifacts it is built to serve carry their own
+terms, and those terms follow the weights rather than this image:
+
+    Qwen3.8-Flash-Next GGUF
+      unsloth/Qwen3.8-Flash-Next-GGUF
+      license_name qwen-community-1.0
+      https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF
+
+    MTP draft head
+      MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf, from the same repository
+      Self-contained: this image carries no cross-model tensor borrowing, so
+      the `shared-` heads are not usable here. See the Dockerfile header.

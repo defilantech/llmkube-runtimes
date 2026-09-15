@@ -1,0 +1,142 @@
+name: build-vulkan-qwen4exp
+
+on:
+  push:
+    branches: [main]
+    paths: ['vulkan-qwen4exp/**', 'scripts/**', '.github/workflows/build-vulkan-qwen4exp.yml']
+    tags: ['vulkan-qwen4exp-v*']
+  pull_request:
+    paths: ['vulkan-qwen4exp/**', 'scripts/**', '.github/workflows/build-vulkan-qwen4exp.yml']
+  workflow_dispatch: {}
+  # NO schedule here, unlike the production Vulkan build and the Laguna
+  # variant. Their weekly canary exists because they track a MOVING ref (a
+  # fork branch pinned by SHA, which can be force-pushed away, or a pinned ref
+  # whose dependency base drifts). Every input here is immutable: an upstream
+  # release tag with its commit SHA asserted, and the ubuntu base pinned by
+  # digest. A weekly rebuild would be byte-identical and would tell us nothing
+  # we act on. When this variant stops being a variant -- that is, when
+  # ggml-org#28243 merges and the patch is deleted -- the production build's
+  # canary covers it again.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-vulkan-qwen4exp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Single image: the server runtime. No tools leg, unlike the production
+  # Vulkan build. This variant's measurements are A/B within ONE binary (MTP on
+  # against MTP off, the same llama.cpp commit both arms), driven over HTTP by
+  # a probe Job on the node; the comparable cross-model yardstick stays the
+  # pure-upstream tools image, which is already published and unaffected by
+  # this patch. Shipping a second patched toolchain would make its numbers
+  # incomparable rather than more useful.
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write       # push candidate to GHCR (trusted refs only)
+      id-token: write        # keyless provenance attestation
+      attestations: write
+    env:
+      IMAGE: ghcr.io/defilantech/llmkube-llama-vulkan-qwen4exp
+      LOCAL: ghcr.io/defilantech/llmkube-llama-vulkan-qwen4exp:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # vulkan-shaders-gen forks a compiler per shader and is memory-heavy; the
+      # default hosted-runner memory left it failing to fork on a fresh
+      # (cache-miss) build. Same headroom as the production Vulkan build.
+      - name: Add swap headroom
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build image (load locally for the gate)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: vulkan-qwen4exp
+          target: server
+          load: true
+          tags: ${{ env.LOCAL }}
+          cache-from: type=gha,scope=vulkan-qwen4exp-server
+          cache-to: type=gha,mode=max,scope=vulkan-qwen4exp-server
+
+      - name: Tier-1 gate (Vulkan backend must load; catches #725-class breaks)
+        run: ./scripts/tier1-gate.sh "${{ env.LOCAL }}"
+
+      - name: Qwen4exp gate (arch, MTP draft graph, rendered flag surface)
+        run: ./scripts/qwen4exp-gate.sh "${{ env.LOCAL }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-vulkan-qwen4exp-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + gate above, but never reach here:
+      # GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. The candidate is unsigned-for-trust; the out-of-band
+      # promoter smoke-tests it on real gfx1151 before anything consumes it.
+      #
+      # NOTE for whoever promotes this image: the promoter's smoke loads a small
+      # unrelated GGUF, so it proves Vulkan0 comes up and clears the decode
+      # floor. It does NOT prove qwen4exp or MTP. The real gate on this model is
+      # the `draft acceptance =` line in the serving pod's log, which runs on
+      # the node and is recorded in the research kit, not here. ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push candidate
+        if: github.event_name != 'pull_request'
+        run: |
+          CAND="${IMAGE}:candidate-${GITHUB_SHA}"
+          docker tag "${LOCAL}" "${CAND}"
+          docker push "${CAND}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${CAND}" | cut -d@ -f2)"
+          echo "DIGEST=${DIGEST}" >> "${GITHUB_ENV}"
+          echo "Pushed ${CAND} (${DIGEST})"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
+
+  # Stable required status check. Job id is `build`, matching build.yml and
+  # build-cuda-gb10-qwen4exp, so branch protection's required `build` context is
+  # reported by whichever of them a PR actually triggers.
+  build:
+    needs: [image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the image build passed
+        run: |
+          result="${{ needs.image.result }}"
+          echo "image result: ${result}"
+          test "${result}" = "success"

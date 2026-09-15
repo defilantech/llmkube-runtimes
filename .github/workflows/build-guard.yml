@@ -20,6 +20,7 @@ on:
     paths-ignore:
       - 'vulkan/**'
       - 'vulkan-laguna/**'
+      - 'vulkan-qwen4exp/**'
       - 'coder/**'
       - 'rocm/**'
       - 'cuda-gb10/**'
@@ -30,6 +31,7 @@ on:
       - '.github/workflows/build.yml'
       - '.github/workflows/build-coder.yml'
       - '.github/workflows/build-laguna.yml'
+      - '.github/workflows/build-vulkan-qwen4exp.yml'
       - '.github/workflows/build-rocm.yml'
       - '.github/workflows/build-cuda-gb10.yml'
       - '.github/workflows/build-cuda-gb10-turbo.yml'
