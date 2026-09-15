@@ -47,13 +47,26 @@ echo "PASS: qwen4exp MTP draft graph present"
 echo "== argument parser accepts the flags the InferenceService renders =="
 # spec.speculativeDecoding renders --spec-type draft-mtp and
 # --spec-draft-n-max; a parser without them aborts llama-server at startup.
-help_out="$(run /app/llama-server --help 2>&1 || true)"
-for flag in --spec-type --spec-draft-n-max; do
-  if ! printf '%s\n' "${help_out}" | grep -q -- "${flag}"; then
-    echo "FAIL: llama-server --help does not list ${flag}"
-    exit 1
-  fi
-done
+#
+# The greps run INSIDE the container and against a FILE, never against a pipe
+# from this shell. `printf ... | grep -q` looks equivalent and is not: grep
+# exits at the first match, the writer takes SIGPIPE, and under `set -o
+# pipefail` the pipeline then reports failure on a PASSING build. It also fails
+# only sometimes, which is worse than always: this check passed on an arm64
+# developer daemon and failed on the amd64 runner, because the help text fit one
+# pipe buffer in the first case and not the second. Same hazard the Dockerfile's
+# arg-surface guard documents.
+if ! run sh -c '
+      /app/llama-server --help > /tmp/qwen4exp-help.txt 2>&1 || true
+      test -s /tmp/qwen4exp-help.txt || { echo "FAIL: llama-server --help produced no output"; exit 1; }
+      rc=0
+      for flag in --spec-type --spec-draft-n-max; do
+        grep -q -- "$flag" /tmp/qwen4exp-help.txt || { echo "FAIL: llama-server --help does not list $flag"; rc=1; }
+      done
+      exit $rc
+    '; then
+  exit 1
+fi
 echo "PASS: --spec-type and --spec-draft-n-max accepted"
 
 echo "== verdict =="
