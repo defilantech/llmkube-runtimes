@@ -1,0 +1,45 @@
+NOTICE for llmkube-exllamav3-cuda-gb10-dsv41-exl3
+=================================================
+
+This runtime image is Apache-2.0 (the llmkube-runtimes repository license) and
+incorporates third-party material under the licenses below. Attribution is a
+condition of those licenses.
+
+Built from source at image build time
+-------------------------------------
+ExLlamaV3             MIT          https://github.com/vcruz305/exllamav3
+                                   branch feat/gb10-ats-load
+                                   commit 954a8ca6e59d48c3e3462068ecf083fe9990f4dc
+                                   Upstream MIT (Turboderp). License text reproduced in
+                                   LICENSE.exllamav3-MIT. The GB10 ATS zero-copy loader,
+                                   DeepseekV41ForCausalLM, the DSpark/MTP drafter and
+                                   util/align_safetensors.py all live on this branch and
+                                   are MIT, inherited from turboderp-org/exllamav3.
+PyTorch               BSD-3-Clause  Installed from PyTorch's cu130 wheel index at build
+                                   (torch 2.14.0+cu130, linux/aarch64). Not vendored here.
+NVIDIA CUDA base      NVIDIA terms  docker.io/nvidia/cuda:13.0.1-devel-ubuntu24.04 and
+                                   :13.0.1-runtime-ubuntu24.04, pinned by digest.
+
+Our own material (Apache-2.0, authored in this repository)
+-----------------------------------------------------------
+- patches/0001-aarch64-build.patch, the aarch64 build patch.
+- entrypoint.sh, the launcher (tree-digest check, MemAvailable pre-flight).
+- build/receipt.sh, the build receipt.
+- server/, the HTTP server.
+
+The aarch64 patch is written from the actual compile failures on linux/aarch64.
+It is NOT derived from any AGPL build helper. Rationale and the four transforms:
+docs/exllamav3-gb10-runtime.md.
+
+Deliberately absent (AGPL-3.0, would break this repository's boundary)
+----------------------------------------------------------------------
+- TabbyAPI (theroyallab/tabbyAPI), the usual ExLlamaV3 API server.
+- vcruz305/vllm-exl3, and specifically tools/patch_exllamav3_aarch64.py, the build
+  helper the community recipe fetches. We wrote our own patch instead.
+- The community recipe repository
+  (vcruz305/DeepSeek-V4.1-Flash-EXL3-DGX-Spark-recipe) is AGPL-3.0-only. It is
+  referenced and followed, never vendored.
+
+Model artifacts are NOT in this image. The EXL3 checkpoint, its 64-byte re-lay
+and the EXL3 attention / MTP overlay are staged by the InferenceService, and the
+weights carry their own terms.
