@@ -1,11 +1,15 @@
-"""SCAFFOLD ONLY: placeholder HTTP server for the GB10 native ExLlamaV3 runtime.
+"""OpenAI-compatible HTTP server for the GB10 native ExLlamaV3 runtime.
 
-This package exists so the image, the operator path and the Tier-1 gate can be
-exercised end to end before the real server lands. `app.py` binds the port and
-answers liveness/readiness and an empty `/v1/models`; it does NOT load a model
-and must not be used to serve inference.
+`app.py` is the FastAPI surface, `engine.py` owns the loaded model and the lock
+that serializes generation, `chat.py` renders the checkpoint's own chat template.
 
-The OpenAI-compatible implementation replaces `app.py`. It is not meant to grow
-out of this file: what this file proves is only that the image starts, binds and
-reports, on the pinned engine, with no x86 kernel linked.
+This is our server rather than TabbyAPI because TabbyAPI is AGPL-3.0 and this
+repository is Apache-2.0 with a "none is AGPL" policy that CI enforces;
+ExLlamaV3 itself is MIT. See `docs/exllamav3-gb10-runtime.md`.
+
+Measurement parity with the community recipe is a requirement, not a nicety:
+temperature 0 and thinking off are the defaults here because those are the
+settings the recipe's published numbers were produced under. A server with
+different defaults produces incomparable numbers, and an incomparable number is
+worse than none.
 """

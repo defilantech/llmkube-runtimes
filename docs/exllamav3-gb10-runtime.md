@@ -7,12 +7,12 @@ Serves DeepSeek-V4.1-Flash EXL3 (SAGE, 1.59 bpw) on **one** DGX Spark with
 `vllm` ring image: the same checkpoint geometry, a different engine, and a
 different memory strategy.
 
-**Status: scaffold.** The aarch64 engine build is proven on real hardware (see
-"Verified on linux/aarch64" below), and the image, its build guards, the
-launcher, the Tier-1 gate and the CI workflow are in place and green locally.
-The HTTP server is still a **placeholder**: it binds the port and answers
-liveness, it does not load a model. The OpenAI-compatible implementation is the
-next unit of work, and this document records why it must be ours.
+**Status: server written, not yet measured.** The aarch64 engine build is proven
+on real hardware (see "Verified on linux/aarch64" below); the image, its build
+guards, the launcher, the Tier-1 gate and the CI workflow are in place and green
+locally; and the OpenAI-compatible server is implemented. What no page here has
+yet is a number from the target Spark, because the checkpoint is not staged
+there. Everything below that cites throughput is the community recipe author's.
 
 ## Why this image exists
 
@@ -101,19 +101,27 @@ Not reused: the recipe's orchestration scripts (`AGPL-3.0-only`) and the
 ## The server (our code)
 
 ExLlamaV3 ships no HTTP server; TabbyAPI is that layer. We write a small
-Apache-2.0 server over the MIT library's own API (`Config, Model, Cache,
-Tokenizer, Generator, Job`, as the `examples/` confirm) and keep the scope
-deliberately thin:
+Apache-2.0 server over the MIT library's own API (`Config.from_directory` →
+`Model.from_config` → `Cache` → `model.load` → `Tokenizer.from_config` →
+`Generator`, as the `examples/` confirm) and keep the scope deliberately thin:
 
-- **Startup:** load model dir, tokenizer, cache, generator from env
-  (`EXL3_MODEL_DIR`, `CTX`, `CHUNK`); load the MTP / DSpark drafter; pass the
-  `EXL3_*` env through unchanged.
-- **Endpoints:** `GET /health`, `GET /v1/models`, `POST /v1/completions`,
-  `POST /v1/chat/completions` (streaming and non-streaming).
-- **Chat templating:** adapt the MIT `examples/chat_templates.py` /
-  `chat_util.py` helpers rather than hand-rolling a template engine.
+- **Load:** the checkpoint from `EXL3_MODEL_DIR`, plus `EXL3_DRAFT_MODEL_DIR` as
+  the `Generator(draft_model=...)` drafter, on `EXL3_DEVICE`. The `EXL3_ATS_*`
+  and `EXL3_DSPARK_*` knobs the loader reads are passed through untouched. The
+  load runs in a background thread while the port is already bound, so a client
+  watches the transition instead of seeing connection refused for a minute.
+- **Endpoints:** `GET /v1/models`, `POST /v1/completions`,
+  `POST /v1/chat/completions` (streaming and non-streaming). Two health
+  surfaces, deliberately split: `/health` is liveness and always 200 while the
+  process is up, reporting load state and error; `/ready` is readiness and 503
+  until a model is loaded. TCP being open is not readiness, and a failed load
+  must not look like a dead process.
+- **Chat templating:** the checkpoint's own template, read from
+  `chat_template.jinja` or `tokenizer_config.json` and rendered with Jinja2.
+  Hand-formatting a chat prompt fails silently (the model still answers, badly),
+  so a missing template raises rather than guesses.
 - **Out of scope:** multi-model routing, LoRA, auth, `config.yml`
-  compatibility.
+  compatibility, concurrent streams. `Generator` is serialized behind one lock.
 
 **Measurement parity is a requirement, not a nicety.** To reproduce the
 recipe's published numbers the server must default to the same protocol the

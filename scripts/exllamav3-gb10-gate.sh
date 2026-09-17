@@ -79,18 +79,36 @@ if run env EXL3_MIN_MEM_AVAILABLE_GIB=99999 /usr/local/bin/llmkube-exllamav3-ent
 fi
 echo "PASS: launcher refuses to start below the MemAvailable floor"
 
-echo "== the server binds and answers (scaffold) =="
+echo "== the server binds, gates on readiness, and serves the OpenAI surface =="
+# No model is staged on a CI runner, so this exercises the not-ready paths on
+# purpose: a pod that has not loaded a model must answer liveness, refuse
+# readiness, and refuse completions, rather than 500 or hang.
 docker run --rm --entrypoint bash "${IMAGE}" -c '
-  EXL3_MIN_MEM_AVAILABLE_GIB=0 /usr/local/bin/llmkube-exllamav3-entrypoint.sh &
+  set -u
+  export EXL3_MIN_MEM_AVAILABLE_GIB=0
+  /usr/local/bin/llmkube-exllamav3-entrypoint.sh >/tmp/server.log 2>&1 &
   pid=$!
+  trap "kill $pid 2>/dev/null || true" EXIT
+  base="http://localhost:${EXL3_PORT:-5000}"
   for _ in $(seq 1 30); do
-    if curl -fsS "http://localhost:${EXL3_PORT:-5000}/health" >/tmp/h.json 2>/dev/null; then break; fi
+    curl -fsS "$base/health" >/tmp/h.json 2>/dev/null && break
     sleep 1
   done
-  cat /tmp/h.json
-  grep -q "\"server_ready\": *true" /tmp/h.json
-  kill $pid
-' || { echo "FAIL: scaffold server did not answer /health"; exit 1; }
-echo "PASS: server binds the port and reports readiness"
+  echo "health: $(cat /tmp/h.json 2>/dev/null)"
+  grep -qE "\"server_ready\": *true" /tmp/h.json || { echo "FAIL: /health did not report server_ready"; exit 1; }
+  grep -qE "\"model_loaded\": *false" /tmp/h.json || { echo "FAIL: /health should report model_loaded false with no model staged"; exit 1; }
+  code="$(curl -s -o /dev/null -w "%{http_code}" "$base/ready")"
+  [ "$code" = "503" ] || { echo "FAIL: /ready returned $code with no model staged (want 503)"; exit 1; }
+  curl -fsS "$base/v1/models" >/tmp/m.json || { echo "FAIL: /v1/models did not answer"; exit 1; }
+  grep -qE "\"data\": *\[\]" /tmp/m.json || { echo "FAIL: /v1/models should be an empty list"; cat /tmp/m.json; exit 1; }
+  code="$(curl -s -o /dev/null -w "%{http_code}" -X POST "$base/v1/completions" \
+            -H "content-type: application/json" -d "{\"prompt\":\"hi\"}")"
+  [ "$code" = "503" ] || { echo "FAIL: /v1/completions returned $code when not ready (want 503)"; exit 1; }
+  code="$(curl -s -o /dev/null -w "%{http_code}" -X POST "$base/v1/chat/completions" \
+            -H "content-type: application/json" -d "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")"
+  [ "$code" = "503" ] || { echo "FAIL: /v1/chat/completions returned $code when not ready (want 503)"; exit 1; }
+  echo "PASS: liveness 200, readiness 503, empty model list, both completions gated"
+' || { echo "FAIL: server surface check failed"; exit 1; }
+echo "PASS: server surface behaves correctly while not ready"
 
 echo "PASS: Tier-1 gate complete for ${IMAGE}"

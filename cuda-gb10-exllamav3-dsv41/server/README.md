@@ -1,32 +1,54 @@
-# Server (scaffold)
+# Server
 
-**This directory is a placeholder.** `app.py` starts, binds `EXL3_PORT` (default
-5000) and answers `/health` and `/v1/models`. It does not load a model.
+OpenAI-compatible HTTP server for the GB10 native ExLlamaV3 runtime. Three
+modules, each with one job:
 
-It exists so that the image builds and runs end to end, the LLMKube `generic`
-runtime's TCP probes have something to reach, and `scripts/exllamav3-gb10-gate.sh`
-has a process to start, before the real server is written.
+| File | Owns |
+|---|---|
+| `app.py` | The FastAPI surface and request/response shapes |
+| `engine.py` | The loaded model, and the lock that serializes generation |
+| `chat.py` | Rendering the checkpoint's own chat template |
 
-## What the real server must do
+## Endpoints
 
-Replaces `app.py`. Wraps the MIT ExLlamaV3 library's own API (`Config, Model,
-Cache, Tokenizer, Generator, Job`), which the upstream `examples/` confirm:
+- `GET /health` liveness: 200 whenever the process is up. Reports load state and
+  any error, so a failed load does not look like a dead process.
+- `GET /ready` readiness: 200 only when a model is loaded, 503 otherwise. Point a
+  Kubernetes readiness probe here; TCP being open is not readiness.
+- `GET /v1/models`
+- `POST /v1/completions` and `POST /v1/chat/completions`, streaming and
+  non-streaming.
 
-- Load the checkpoint from `EXL3_MODEL_DIR` with the recipe's knobs passed
-  through unchanged (`EXL3_ATS_MMAP`, `EXL3_ATS_COPY`, `EXL3_DSPARK_CONF`,
-  `CHUNK`, `CTX`); load the DSpark / MTP drafter.
-- Serve `/health`, `/v1/models`, `/v1/completions`, `/v1/chat/completions`
-  (streaming and non-streaming).
-- Chat templating via the MIT `examples/chat_templates.py` / `chat_util.py`
-  helpers rather than a hand-rolled template engine.
-- Out of scope: multi-model routing, LoRA, auth, `config.yml` compatibility.
+## Environment
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `EXL3_MODEL_DIR` | `/models` | Checkpoint directory |
+| `EXL3_DRAFT_MODEL_DIR` | unset | Draft / MTP drafter, passed to `Generator(draft_model=...)` |
+| `EXL3_DEVICE` | `cuda:0` | Device for `model.load` |
+| `EXL3_CACHE_TOKENS` | `32768` | KV cache tokens |
+| `EXL3_MAX_BATCH` | `1` | Cache batch size |
+| `EXL3_THINKING` | `0` | Template kwarg `enable_thinking` |
+| `EXL3_REQUIRE_MODEL` | `0` | `1` makes a failed load fatal instead of reported |
+
+The `EXL3_ATS_*` and `EXL3_DSPARK_*` knobs the loader reads are set by the
+InferenceService and passed straight through; the server does not touch them.
 
 ## Measurement parity
 
 The community recipe publishes its decode and prefill numbers under a specific
-protocol: temperature 0, thinking off, DSpark drafting at the same block size and
-confidence gate. The server must default to that protocol, or its numbers are not
-comparable to the recipe's and the POC loses the comparison it exists to make.
+protocol: temperature 0, thinking off, and its drafting settings. The defaults
+here match the first two, and `chat_template_kwargs` (vLLM-style passthrough) is
+exposed so a client can set the rest without the server inventing a flag per
+model. Numbers produced under different settings are not comparable to the
+recipe's, and an incomparable number is worse than none.
+
+## What this deliberately does not do
+
+Multi-model routing, LoRA, authentication, `config.yml` compatibility, and
+concurrent streams. `Generator` is serialized behind one lock, which is the
+honest shape for a single-stream POC: queueing is a scheduling decision, not
+something to hide behind a thread pool.
 
 ## Why this is ours
 

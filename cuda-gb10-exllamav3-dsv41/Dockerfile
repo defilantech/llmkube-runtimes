@@ -83,8 +83,7 @@ RUN pip install --no-cache-dir "torch==${TORCH_VERSION}" \
 # under a CUDA stack that is already correct for sm_121.
 RUN pip install --no-cache-dir \
       "tokenizers>=0.21.1" "numpy>=2.1.0" "safetensors>=0.3.2" \
-      rich typing_extensions pyyaml marisa_trie pydantic "llguidance>=1.7.0" pillow \
-      fastapi uvicorn
+      rich typing_extensions pyyaml marisa_trie pydantic "llguidance>=1.7.0" pillow
 
 RUN git clone --branch "${EXLLAMAV3_REF}" https://github.com/vcruz305/exllamav3.git /src \
     && got="$(git -C /src rev-parse HEAD)" \
@@ -181,6 +180,11 @@ print('exllamav3', __version__); \
 assert e.exl3_moe_cpu_has_avx2() is False, 'x86 tier reported available on aarch64'; \
 print('PASS: exllamav3_ext dlopens, stubs report x86 tiers unavailable')"
 
+# Server-only dependencies, AFTER the extension build on purpose: editing the
+# server must not invalidate the multi-minute CUDA compile layer. The server is
+# copied into the runtime stage, so a server change rebuilds in seconds.
+RUN pip install --no-cache-dir fastapi uvicorn jinja2
+
 COPY build /opt/llmkube/build
 RUN bash /opt/llmkube/build/receipt.sh
 
@@ -211,9 +215,10 @@ COPY --from=build /app/CUDA_ARCHS /app/CUDA_ARCHS
 # image can read what was applied.
 COPY patches /opt/llmkube/patches
 COPY LICENSE.exllamav3-MIT NOTICE /opt/llmkube/
-# SCAFFOLD: this is the placeholder server. It binds the port and answers
-# liveness so the operator path and this pipeline can be exercised end to end;
-# it does not load a model yet. The OpenAI-compatible implementation replaces it.
+# The HTTP server. Loads the checkpoint from EXL3_MODEL_DIR in a background
+# thread while the port is already bound, serves the OpenAI subset an agent loop
+# uses, and reports load failures through /health and /ready rather than by
+# dying. WHY it is ours rather than TabbyAPI: the licence boundary above.
 COPY server /app/server
 COPY entrypoint.sh /usr/local/bin/llmkube-exllamav3-entrypoint.sh
 RUN chmod +x /usr/local/bin/llmkube-exllamav3-entrypoint.sh
