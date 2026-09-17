@@ -195,6 +195,22 @@ the whole reason the image exists, asserted on the artifact rather than assumed
 from the arch flag. `torch 2.14.0+cu130` installs cleanly for aarch64 from
 PyTorch's `cu130` index, so the dependency question is closed.
 
+### Verified on the target hardware
+
+The engine's premise is ATS addressing mode, and the question that mattered was
+whether a **container** sees it, not whether the host does. Measured on a target
+GB10 from inside a pod:
+
+```
+Addressing Mode : ATS
+NVIDIA GB10, compute 12.1, driver 580.173.02
+```
+
+So the zero-copy alias is available to a containerised loader and the ~107 GiB
+pack has the memory story the recipe claims. Had it come back non-ATS, the
+loader would copy 67.41 GiB into CUDA memory and the configuration would need
+rethinking rather than tuning.
+
 ## Gates
 
 Same two-tier model as the other runtime images (see the README). Build-stage
