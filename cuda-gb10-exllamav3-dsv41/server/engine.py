@@ -28,6 +28,7 @@ log = logging.getLogger("exl3.engine")
 
 DEFAULT_CACHE_TOKENS = 32768
 DEFAULT_MAX_BATCH = 1
+DEFAULT_DRAFT_CONFIDENCE = 0.4
 
 
 class EngineError(RuntimeError):
@@ -43,6 +44,9 @@ class Engine:
     device: str = "cuda:0"
     cache_tokens: int = DEFAULT_CACHE_TOKENS
     max_batch: int = DEFAULT_MAX_BATCH
+    mtp_draft: bool = False
+    draft_tokens: int | None = None
+    draft_confidence: float = DEFAULT_DRAFT_CONFIDENCE
 
     state: str = "idle"          # idle | loading | ready | failed
     error: str = ""
@@ -57,12 +61,16 @@ class Engine:
 
     @classmethod
     def from_env(cls) -> "Engine":
+        draft_tokens = os.environ.get("EXL3_DRAFT_TOKENS", "")
         return cls(
             model_dir=os.environ.get("EXL3_MODEL_DIR", "/models"),
             draft_model_dir=os.environ.get("EXL3_DRAFT_MODEL_DIR", ""),
             device=os.environ.get("EXL3_DEVICE", "cuda:0"),
             cache_tokens=int(os.environ.get("EXL3_CACHE_TOKENS", DEFAULT_CACHE_TOKENS)),
             max_batch=int(os.environ.get("EXL3_MAX_BATCH", DEFAULT_MAX_BATCH)),
+            mtp_draft=os.environ.get("EXL3_MTP", "0") == "1",
+            draft_tokens=int(draft_tokens) if draft_tokens else None,
+            draft_confidence=float(os.environ.get("EXL3_DSPARK_CONF", DEFAULT_DRAFT_CONFIDENCE)),
         )
 
     # -- loading ------------------------------------------------------------
@@ -108,6 +116,19 @@ class Engine:
 
         config = Config.from_directory(model_dir)
         model = Model.from_config(config)
+
+        # The MTP drafter is a second component of the same checkpoint, not a
+        # separate directory: DSPARK layers stored under the mtp.* namespace. It
+        # needs its own cache, and that cache must be the size of the main one.
+        if self.mtp_draft and draft_model is None:
+            draft_model = Model.from_config(config, component="mtp")
+            draft_cache = Cache(
+                draft_model,
+                max_num_tokens=self.cache_tokens,
+                max_batch_size=self.max_batch,
+            )
+            draft_model.load(progressbar=False, device=self.device)
+
         # max_history is required only for drafting against a recurrent target.
         cache = Cache(
             model,
@@ -123,6 +144,9 @@ class Engine:
             tokenizer=tokenizer,
             draft_model=draft_model,
             draft_cache=draft_cache,
+            num_draft_tokens=self.draft_tokens,
+            dynamic_draft_tokens=True,
+            draft_confidence=self.draft_confidence,
         )
 
         self._model = model
