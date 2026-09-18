@@ -67,6 +67,9 @@ jobs:
       # The licence boundary is the reason this image is built from source at all,
       # so it is checked before anything expensive runs, and on the source tree
       # rather than only inside the build.
+      #
+      # Three things are asserted: attribution travels with the image, no AGPL
+      # licence text is vendored, and the build is genuinely ours.
       - name: Verify attribution files and the absence of AGPL text
         run: |
           cd cuda-gb10-exllamav3-dsv41
@@ -75,14 +78,20 @@ jobs:
             [ -f "$f" ] || { echo "FAIL: $f missing; MIT requires the notice to travel."; fail=1; }
           done
           [[ "$(head -1 LICENSE.exllamav3-MIT)" == "MIT License"* ]] || { echo "FAIL: LICENSE.exllamav3-MIT is not the MIT text."; fail=1; }
-          if grep -rli 'GNU AFFERO' patches server 2>/dev/null | grep -q .; then
-            echo "FAIL: AGPL text found in the patch set or server."; fail=1
+          if grep -rli 'GNU AFFERO' Dockerfile entrypoint.sh build patches server 2>/dev/null | grep -q .; then
+            echo "FAIL: AGPL text found in vendored material."; fail=1
           fi
-          # The patch is ours. If a future edit imports the AGPL helper by name,
-          # this catches it.
-          if grep -rqi 'vllm-exl3\|tabbyapi' patches server 2>/dev/null; then
-            echo "FAIL: an AGPL component is referenced in vendored material."; fail=1
+          # Prose that NAMES an AGPL project to explain this repository's boundary has
+          # to stay, so this is not a name grep: what has to fail is a dependency on
+          # one, an import of it or a fetch from it.
+          if grep -rnE "(^|[^A-Za-z0-9_])(import|from)[[:space:]]+[A-Za-z0-9_.]*(tabbyapi|vllm[_-]exl3)|https?://[^[:space:]]*(tabbyapi|vllm[_-]exl3)" \
+               Dockerfile entrypoint.sh build patches server 2>/dev/null | grep -q .; then
+            echo "FAIL: an AGPL project is imported or fetched, not merely named."; fail=1
           fi
+          # Cheaper than auditing by hand: if the provenance statements go away, CI
+          # says so, so the honesty is enforced rather than remembered.
+          grep -qi 'NOT derived from any AGPL build helper' NOTICE || { echo "FAIL: NOTICE no longer records that the patch is ours."; fail=1; }
+          grep -qi 'Deliberately absent' NOTICE || { echo "FAIL: NOTICE no longer lists the AGPL components as absent."; fail=1; }
           exit $fail
 
       - name: Verify the base digests match the Dockerfile
