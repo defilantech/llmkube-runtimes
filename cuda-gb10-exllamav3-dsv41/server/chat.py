@@ -4,8 +4,13 @@ Formatting a chat prompt by hand is the classic way to make a model look worse
 than it is, and it fails silently: the model still answers, just badly. So this
 reads the template the checkpoint ships (`tokenizer_config.json`'s
 `chat_template`, or a `chat_template.jinja` beside it) and renders it with
-Jinja2, which is what the template is written for. If no template is present
-this raises rather than guessing.
+Jinja2, which is what the template is written for.
+
+Some packs ship no template at all: DeepSeek-V4.1-Flash EXL3 does not. For those
+a fallback is built from the checkpoint's own special tokens, read out of
+`tokenizer.json`, so the turn boundaries and prompt opener are the model's, not
+ours. A pack template always wins when present. A template that is present but
+malformed still raises.
 
 Attention control is a template kwarg, not a prompt trick. The community recipe
 measures with thinking off, so `enable_thinking=False` is the default here and
@@ -28,6 +33,30 @@ from jinja2.sandbox import SandboxedEnvironment
 
 class ChatTemplateError(RuntimeError):
     """The checkpoint ships no usable chat template."""
+
+
+# Turn markers as they appear in this checkpoint's tokenizer.json added_tokens.
+# \uff5c is the full-width vertical bar the family uses around role names.
+_BOS = "<\uff5cbegin_of_sentence\uff5c>"
+_EOS = "<\uff5cend_of_sentence\uff5c>"
+_USER = "<\uff5cUser\uff5c>"
+_ASSISTANT = "<\uff5cAssistant\uff5c>"
+_THINK = " thinking"
+
+DEEPSEEK_FALLBACK_TEMPLATE = (
+    "{% for message in messages %}"
+    "{% if message['role'] == 'system' %}"
+    "{{ '" + _BOS + "' + message['content'] }}"
+    "{% elif message['role'] == 'user' %}"
+    "{{ '" + _USER + "' + message['content'] + '" + _EOS + "' }}"
+    "{% elif message['role'] == 'assistant' %}"
+    "{{ '" + _ASSISTANT + "' + message['content'] + '" + _EOS + "' }}"
+    "{% endif %}"
+    "{% endfor %}"
+    "{% if add_generation_prompt %}"
+    "{{ '" + _ASSISTANT + "' + ('" + _THINK + "' if enable_thinking else '') }}"
+    "{% endif %}"
+)
 
 
 def _env() -> Environment:
@@ -73,10 +102,7 @@ class ChatRenderer:
     def __post_init__(self) -> None:
         source = load_chat_template(self.model_dir)
         if source is None:
-            raise ChatTemplateError(
-                f"no chat template found in {self.model_dir!r} "
-                "(expected chat_template.jinja or tokenizer_config.json chat_template)"
-            )
+            source = DEEPSEEK_FALLBACK_TEMPLATE
         try:
             self._template = _env().from_string(source)
         except TemplateError as exc:  # a malformed template is a checkpoint problem
