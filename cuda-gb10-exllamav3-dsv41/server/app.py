@@ -86,6 +86,10 @@ app = FastAPI(title="llmkube-exllamav3", lifespan=lifespan)
 # -- request models --------------------------------------------------------
 
 
+class StreamOptions(BaseModel):
+    include_usage: bool = False
+
+
 class CompletionRequest(BaseModel):
     model: str | None = None
     prompt: str | list[str]
@@ -93,6 +97,7 @@ class CompletionRequest(BaseModel):
     temperature: float = Field(default=0.0, ge=0.0, le=5.0)
     top_p: float = Field(default=0.95, gt=0.0, le=1.0)
     stream: bool = False
+    stream_options: StreamOptions | None = None
 
 
 class ChatMessage(BaseModel):
@@ -107,6 +112,7 @@ class ChatRequest(BaseModel):
     temperature: float = Field(default=0.0, ge=0.0, le=5.0)
     top_p: float = Field(default=0.95, gt=0.0, le=1.0)
     stream: bool = False
+    stream_options: StreamOptions | None = None
     # vLLM-style passthrough so a client can set template kwargs (thinking, tools)
     # without the server inventing a flag per model.
     chat_template_kwargs: dict[str, Any] | None = None
@@ -125,6 +131,21 @@ def _single_prompt(prompt: str | list[str]) -> str:
 
 def _completion_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex}"
+
+
+def _usage(prompt: str, completion: str) -> dict:
+    """The OpenAI usage object, counted by the checkpoint's own tokenizer."""
+    prompt_tokens = engine.count_tokens(prompt, add_bos=True)
+    completion_tokens = engine.count_tokens(completion)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+def _wants_usage(req: CompletionRequest | ChatRequest) -> bool:
+    return bool(req.stream_options and req.stream_options.include_usage)
 
 
 # -- health ----------------------------------------------------------------
@@ -177,11 +198,14 @@ def completions(req: CompletionRequest, request: Request):
     model_name = req.model or engine.model_name
 
     if req.stream:
+        want_usage = _wants_usage(req)
 
         def gen() -> Iterator[str]:
             first = True
+            parts: list[str] = []
             try:
                 for chunk in engine.stream(prompt, req.max_tokens, req.temperature, req.top_p):
+                    parts.append(chunk)
                     delta = {"choices": [{"index": 0, "text": chunk}]}
                     if first:
                         delta["id"] = cid
@@ -192,6 +216,17 @@ def completions(req: CompletionRequest, request: Request):
                     yield _sse(delta)
             except EngineError as exc:
                 yield _sse({"error": {"message": str(exc), "type": "engine_error"}})
+            if want_usage:
+                yield _sse(
+                    {
+                        "id": cid,
+                        "object": "text_completion",
+                        "created": created,
+                        "model": model_name,
+                        "choices": [],
+                        "usage": _usage(prompt, "".join(parts)),
+                    }
+                )
             yield _sse(
                 {
                     "id": cid,
@@ -216,6 +251,7 @@ def completions(req: CompletionRequest, request: Request):
         "created": created,
         "model": model_name,
         "choices": [{"index": 0, "text": text, "finish_reason": "stop"}],
+        "usage": _usage(prompt, text),
     }
 
 
@@ -245,11 +281,14 @@ def chat_completions(req: ChatRequest, request: Request):
     model_name = req.model or engine.model_name
 
     if req.stream:
+        want_usage = _wants_usage(req)
 
         def gen() -> Iterator[str]:
             first = True
+            parts: list[str] = []
             try:
                 for chunk in engine.stream(prompt, req.max_tokens, req.temperature, req.top_p):
+                    parts.append(chunk)
                     delta = {"choices": [{"index": 0, "delta": {"content": chunk}}]}
                     if first:
                         delta["id"] = cid
@@ -260,6 +299,17 @@ def chat_completions(req: ChatRequest, request: Request):
                     yield _sse(delta)
             except EngineError as exc:
                 yield _sse({"error": {"message": str(exc), "type": "engine_error"}})
+            if want_usage:
+                yield _sse(
+                    {
+                        "id": cid,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model_name,
+                        "choices": [],
+                        "usage": _usage(prompt, "".join(parts)),
+                    }
+                )
             yield _sse(
                 {
                     "id": cid,
@@ -290,4 +340,5 @@ def chat_completions(req: ChatRequest, request: Request):
                 "finish_reason": "stop",
             }
         ],
+        "usage": _usage(prompt, text),
     }

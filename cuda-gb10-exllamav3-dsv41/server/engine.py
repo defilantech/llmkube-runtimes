@@ -157,6 +157,23 @@ class Engine:
 
     # -- introspection ------------------------------------------------------
 
+    def count_tokens(self, text: str, add_bos: bool = False) -> int:
+        """The tokenizer's count for `text`, for the OpenAI usage object.
+
+        Prompt and completion counts both come from here, so a client that adds
+        them gets one consistent number rather than one counted by us and one by
+        the tokenizer. Zero before a model is loaded, which is the honest answer
+        while nothing can be tokenized.
+        """
+        tokenizer = self._tokenizer
+        if tokenizer is None or not text:
+            return 0
+        ids = tokenizer.encode(text, add_bos=add_bos, encode_special_tokens=True)
+        # encode returns a (batch, length) tensor, so the token count is the last
+        # axis: len() on it would count the batch, which is always 1.
+        shape = getattr(ids, "shape", None)
+        return int(shape[-1]) if shape is not None else len(ids)
+
     def snapshot(self) -> dict:
         with self._lock:
             return {
