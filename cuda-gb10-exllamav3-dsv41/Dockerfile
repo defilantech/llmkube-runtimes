@@ -199,13 +199,19 @@ LABEL org.opencontainers.image.title="llmkube-exllamav3-cuda-gb10-dsv41-exl3" \
       io.llmkube.exllamav3.ref="${EXLLAMAV3_REF}" \
       io.llmkube.exllamav3.sha="${EXLLAMAV3_SHA}"
 
+# Triton compiles its CUDA driver utilities from C at first use and needs a host
+# compiler and the CPython headers to do it (python3-dev supplies Python.h), so
+# both stay in the runtime stage: exllamav3's attention path runs through Triton.
 # libgomp1 for torch's OpenMP, curl for the healthcheck. The CUDA runtime base
 # already carries libcudart/cuBLAS that the extension links. No driver: the node
 # supplies libcuda.so.1 via the NVIDIA container runtime.
+# /home/exl3 is the runtime user's HOME and some libraries (Triton's JIT cache)
+# write under it, so it is created and owned here rather than left absent.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3-venv libgomp1 curl ca-certificates \
+      python3 python3-venv python3-dev libgomp1 curl ca-certificates gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -r exl3 && useradd -r -g exl3 exl3
+    && groupadd -r exl3 && useradd -r -g exl3 exl3 \
+    && mkdir -p /home/exl3 && chown exl3:exl3 /home/exl3
 
 COPY --from=build /opt/venv /opt/venv
 COPY --from=build /opt/llmkube /opt/llmkube
