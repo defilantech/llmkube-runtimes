@@ -94,19 +94,24 @@ jobs:
           grep -qi 'Deliberately absent' NOTICE || { echo "FAIL: NOTICE no longer lists the AGPL components as absent."; fail=1; }
           exit $fail
 
+      # An ARG may be declared once per stage: the build stage clones at the engine
+      # pin, the runtime stage repeats it for its OCI labels, and the same is true of
+      # the base digests if a stage is ever split further. So this asserts that EVERY
+      # declaration carries the expected value and that at least one exists, rather
+      # than extracting a single line and comparing that.
       - name: Verify the base digests match the Dockerfile
         run: |
-          drift() {
-            got="$(sed -n "s|^ARG $1=\(sha256:[0-9a-f]\{64\}\)$|\1|p" cuda-gb10-exllamav3-dsv41/Dockerfile)"
-            [ -n "$got" ] || { echo "FAIL: ARG $1 is not pinned to a sha256 digest."; return 1; }
-            [ "$got" = "$2" ] || { echo "FAIL: $1 drift between the workflow and the Dockerfile."; return 1; }
-            echo "ok: $1 ${got}"
+          declare_ok() {
+            local name="$1" want="$2" n bad
+            n="$(grep -c "^ARG ${name}=" cuda-gb10-exllamav3-dsv41/Dockerfile)"
+            [ "$n" -ge 1 ] || { echo "FAIL: ARG ${name} is not declared in the Dockerfile."; exit 1; }
+            bad="$(grep "^ARG ${name}=" cuda-gb10-exllamav3-dsv41/Dockerfile | grep -vc "^ARG ${name}=${want}$")"
+            [ "$bad" = "0" ] || { echo "FAIL: ${name} drift between the workflow and the Dockerfile."; exit 1; }
+            echo "ok: ${name} ${want} (${n} declaration(s))"
           }
-          drift CUDA_DEVEL_DIGEST "${BASE_DEVEL_DIGEST}"
-          drift CUDA_RUNTIME_DIGEST "${BASE_RUNTIME_DIGEST}"
-          pin="$(sed -n 's|^ARG EXLLAMAV3_SHA=\([0-9a-f]\{40\}\)$|\1|p' cuda-gb10-exllamav3-dsv41/Dockerfile)"
-          [ "$pin" = "${EXLLAMAV3_SHA}" ] || { echo "FAIL: ExLlamaV3 pin drift between the workflow and the Dockerfile."; exit 1; }
-          echo "ok: EXLLAMAV3_SHA ${pin}"
+          declare_ok CUDA_DEVEL_DIGEST   "${BASE_DEVEL_DIGEST}"
+          declare_ok CUDA_RUNTIME_DIGEST "${BASE_RUNTIME_DIGEST}"
+          declare_ok EXLLAMAV3_SHA       "${EXLLAMAV3_SHA}"
 
       - name: Dockerfile parse check (before the expensive pull)
         run: python3 scripts/dockerfile-parse-check.py $(git ls-files '*Dockerfile')
