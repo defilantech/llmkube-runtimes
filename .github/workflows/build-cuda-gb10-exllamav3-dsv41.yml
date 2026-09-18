@@ -99,13 +99,17 @@ jobs:
       # the base digests if a stage is ever split further. So this asserts that EVERY
       # declaration carries the expected value and that at least one exists, rather
       # than extracting a single line and comparing that.
+      #
+      # Run under `bash -e`, so nothing here may exit non-zero on the success path:
+      # `grep -c` exits 1 when it selects nothing, which is exactly the passing case.
       - name: Verify the base digests match the Dockerfile
         run: |
           declare_ok() {
-            local name="$1" want="$2" n bad
-            n="$(grep -c "^ARG ${name}=" cuda-gb10-exllamav3-dsv41/Dockerfile)"
-            [ "$n" -ge 1 ] || { echo "FAIL: ARG ${name} is not declared in the Dockerfile."; exit 1; }
-            bad="$(grep "^ARG ${name}=" cuda-gb10-exllamav3-dsv41/Dockerfile | grep -vc "^ARG ${name}=${want}$")"
+            local name="$1" want="$2" decls n bad
+            decls="$(grep "^ARG ${name}=" cuda-gb10-exllamav3-dsv41/Dockerfile || true)"
+            [ -n "$decls" ] || { echo "FAIL: ARG ${name} is not declared in the Dockerfile."; exit 1; }
+            n="$(printf '%s\n' "$decls" | wc -l | tr -d ' ')"
+            bad="$(printf '%s\n' "$decls" | awk -v w="ARG ${name}=${want}" '$0 != w' | wc -l | tr -d ' ')"
             [ "$bad" = "0" ] || { echo "FAIL: ${name} drift between the workflow and the Dockerfile."; exit 1; }
             echo "ok: ${name} ${want} (${n} declaration(s))"
           }
