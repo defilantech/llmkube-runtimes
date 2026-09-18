@@ -1,0 +1,205 @@
+name: build-cuda-gb10-exllamav3-dsv41
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cuda-gb10-exllamav3-dsv41/**'
+      - 'scripts/exllamav3-gb10-gate.sh'
+      - 'scripts/dockerfile-parse-check.py'
+      - '.github/workflows/build-cuda-gb10-exllamav3-dsv41.yml'
+    tags: ['cuda-gb10-exllamav3-dsv41-v*']
+  pull_request:
+    paths:
+      - 'cuda-gb10-exllamav3-dsv41/**'
+      - 'scripts/exllamav3-gb10-gate.sh'
+      - 'scripts/dockerfile-parse-check.py'
+      - '.github/workflows/build-cuda-gb10-exllamav3-dsv41.yml'
+  workflow_dispatch: {}
+  # NO schedule. Every input is pinned: the CUDA base by digest, torch by version,
+  # the ExLlamaV3 fork by commit, and our patch vendored in-tree. A weekly rebuild
+  # would reproduce identical content and spend ~10 min of arm64 runner to restate
+  # what the pins already say.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-cuda-gb10-exllamav3-dsv41-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    # arm64 native and a hard requirement rather than a preference: GB10 is
+    # aarch64 Grace, and the extension is compiled here for sm_121. QEMU would
+    # not help.
+    runs-on: ubuntu-24.04-arm
+    # Measured 2026-09-17 on a workstation arm64 daemon at MAX_JOBS=2: the whole
+    # build was ~9 minutes, dominated by the CUDA extension compile. The ceiling
+    # exists so a hung nvcc fails as a timeout rather than holding the
+    # concurrency group.
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: write      # push candidate to GHCR (trusted refs only)
+      id-token: write      # keyless provenance attestation
+      attestations: write
+    env:
+      IMAGE: ghcr.io/defilantech/llmkube-exllamav3-cuda-gb10-dsv41-exl3
+      LOCAL: ghcr.io/defilantech/llmkube-exllamav3-cuda-gb10-dsv41-exl3:ci-${{ github.sha }}
+      EXLLAMAV3_SHA: '954a8ca6e59d48c3e3462068ecf083fe9990f4dc'
+      # Same CUDA base digests as cuda-gb10/, so the two GB10 images share a base.
+      # Bumping them means editing both the Dockerfile ARG lines and this, and the
+      # drift check enforces that.
+      BASE_DEVEL_DIGEST: 'sha256:5c36750138dc1447a17dafbb397674f167d3b44ce18d9160d769df114577b35d'
+      BASE_RUNTIME_DIGEST: 'sha256:36050649ad1acc5d3de2c26620191c25850fb12a5771b6c22996033003d952e4'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
+                      /usr/share/swift /usr/local/.ghcup || true
+          sudo docker image prune -af || true
+          df -h /
+
+      # The licence boundary is the reason this image is built from source at all,
+      # so it is checked before anything expensive runs, and on the source tree
+      # rather than only inside the build.
+      #
+      # Three things are asserted: attribution travels with the image, no AGPL
+      # licence text is vendored, and the build is genuinely ours.
+      - name: Verify attribution files and the absence of AGPL text
+        run: |
+          cd cuda-gb10-exllamav3-dsv41
+          fail=0
+          for f in NOTICE LICENSE.exllamav3-MIT patches/0001-aarch64-build.patch patches/UPSTREAM_COMMITS.txt; do
+            [ -f "$f" ] || { echo "FAIL: $f missing; MIT requires the notice to travel."; fail=1; }
+          done
+          [[ "$(head -1 LICENSE.exllamav3-MIT)" == "MIT License"* ]] || { echo "FAIL: LICENSE.exllamav3-MIT is not the MIT text."; fail=1; }
+          if grep -rli 'GNU AFFERO' Dockerfile entrypoint.sh build patches server 2>/dev/null | grep -q .; then
+            echo "FAIL: AGPL text found in vendored material."; fail=1
+          fi
+          # Prose that NAMES an AGPL project to explain this repository's boundary has
+          # to stay, so this is not a name grep: what has to fail is a dependency on
+          # one, an import of it or a fetch from it.
+          if grep -rnE "(^|[^A-Za-z0-9_])(import|from)[[:space:]]+[A-Za-z0-9_.]*(tabbyapi|vllm[_-]exl3)|https?://[^[:space:]]*(tabbyapi|vllm[_-]exl3)" \
+               Dockerfile entrypoint.sh build patches server 2>/dev/null | grep -q .; then
+            echo "FAIL: an AGPL project is imported or fetched, not merely named."; fail=1
+          fi
+          # Cheaper than auditing by hand: if the provenance statements go away, CI
+          # says so, so the honesty is enforced rather than remembered.
+          grep -qi 'NOT derived from any AGPL build helper' NOTICE || { echo "FAIL: NOTICE no longer records that the patch is ours."; fail=1; }
+          grep -qi 'Deliberately absent' NOTICE || { echo "FAIL: NOTICE no longer lists the AGPL components as absent."; fail=1; }
+          exit $fail
+
+      # An ARG may be declared once per stage: the build stage clones at the engine
+      # pin, the runtime stage repeats it for its OCI labels, and the same is true of
+      # the base digests if a stage is ever split further. So this asserts that EVERY
+      # declaration carries the expected value and that at least one exists, rather
+      # than extracting a single line and comparing that.
+      #
+      # Run under `bash -e`, so nothing here may exit non-zero on the success path:
+      # `grep -c` exits 1 when it selects nothing, which is exactly the passing case.
+      - name: Verify the base digests match the Dockerfile
+        run: |
+          declare_ok() {
+            local name="$1" want="$2" decls n bad
+            decls="$(grep "^ARG ${name}=" cuda-gb10-exllamav3-dsv41/Dockerfile || true)"
+            [ -n "$decls" ] || { echo "FAIL: ARG ${name} is not declared in the Dockerfile."; exit 1; }
+            n="$(printf '%s\n' "$decls" | wc -l | tr -d ' ')"
+            bad="$(printf '%s\n' "$decls" | awk -v w="ARG ${name}=${want}" '$0 != w' | wc -l | tr -d ' ')"
+            [ "$bad" = "0" ] || { echo "FAIL: ${name} drift between the workflow and the Dockerfile."; exit 1; }
+            echo "ok: ${name} ${want} (${n} declaration(s))"
+          }
+          declare_ok CUDA_DEVEL_DIGEST   "${BASE_DEVEL_DIGEST}"
+          declare_ok CUDA_RUNTIME_DIGEST "${BASE_RUNTIME_DIGEST}"
+          declare_ok EXLLAMAV3_SHA       "${EXLLAMAV3_SHA}"
+
+      - name: Dockerfile parse check (before the expensive pull)
+        run: python3 scripts/dockerfile-parse-check.py $(git ls-files '*Dockerfile')
+
+      - name: Shell syntax check
+        run: |
+          bash -n cuda-gb10-exllamav3-dsv41/entrypoint.sh
+          bash -n cuda-gb10-exllamav3-dsv41/build/receipt.sh
+          bash -n scripts/exllamav3-gb10-gate.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      # A hosted arm64 runner has 4 vCPU and 16 GB, and nvcc peaks at multiple GB
+      # per process; the Dockerfile's own default (3) is the conservative fallback.
+      - name: Choose a build parallelism the runner can survive
+        run: |
+          jobs="$(nproc)"
+          [ "$jobs" -gt 4 ] && jobs=4
+          echo "MAX_JOBS=${jobs}" >> "${GITHUB_ENV}"
+          echo "nproc=$(nproc) MemTotal=$(awk '/MemTotal/{print $2/1024/1024" GiB"}' /proc/meminfo) -> MAX_JOBS=${jobs}"
+
+      # NO cache-from/cache-to: the compiled extension layer is multi-GB and would
+      # dominate the shared 10 GB Actions cache, evicting the other images' caches
+      # where a miss costs half an hour.
+      - name: Build image (load locally for the gate)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: cuda-gb10-exllamav3-dsv41
+          load: true
+          tags: ${{ env.LOCAL }}
+          build-args: |
+            MAX_JOBS=${{ env.MAX_JOBS }}
+            EXLLAMAV3_SHA=${{ env.EXLLAMAV3_SHA }}
+
+      - name: Disk after build
+        if: always()
+        run: df -h /
+
+      # The gate re-asserts the Dockerfile's guarantees on the SHIPPED image, and
+      # drives the ones that can fail: a tampered tree must be refused, an
+      # unreachable memory floor must stop the launcher.
+      - name: Tier-1 gate
+        run: ./scripts/exllamav3-gb10-gate.sh "${{ env.LOCAL }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-cuda-gb10-exllamav3-dsv41-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + gate above but never reach here:
+      # GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. The candidate is unsigned-for-trust; an out-of-band GPU
+      # smoke on a real Spark precedes anything serving. ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push candidate
+        if: github.event_name != 'pull_request'
+        run: |
+          CAND="${IMAGE}:candidate-${GITHUB_SHA}"
+          docker tag "${LOCAL}" "${CAND}"
+          docker push "${CAND}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${CAND}" | cut -d@ -f2)"
+          echo "DIGEST=${DIGEST}" >> "${GITHUB_ENV}"
+          echo "Pushed ${CAND} (${DIGEST})"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
