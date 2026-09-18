@@ -46,6 +46,7 @@ class Engine:
     max_batch: int = DEFAULT_MAX_BATCH
     mtp_draft: bool = False
     draft_tokens: int | None = None
+    dynamic_draft: bool = False
     draft_confidence: float = DEFAULT_DRAFT_CONFIDENCE
 
     state: str = "idle"          # idle | loading | ready | failed
@@ -70,7 +71,11 @@ class Engine:
             max_batch=int(os.environ.get("EXL3_MAX_BATCH", DEFAULT_MAX_BATCH)),
             mtp_draft=os.environ.get("EXL3_MTP", "0") == "1",
             draft_tokens=int(draft_tokens) if draft_tokens else None,
-            draft_confidence=float(os.environ.get("EXL3_DSPARK_CONF", DEFAULT_DRAFT_CONFIDENCE)),
+            # The drafter's own confidence threshold is EXL3_DSPARK_CONF, which the
+            # fork's MTP module reads for itself; these two are the generator's
+            # separate dynamic-drafting controls and default to the fork's values.
+            dynamic_draft=os.environ.get("EXL3_DYNAMIC_DRAFT", "0") == "1",
+            draft_confidence=float(os.environ.get("EXL3_DRAFT_CONF", DEFAULT_DRAFT_CONFIDENCE)),
         )
 
     # -- loading ------------------------------------------------------------
@@ -145,7 +150,7 @@ class Engine:
             draft_model=draft_model,
             draft_cache=draft_cache,
             num_draft_tokens=self.draft_tokens,
-            dynamic_draft_tokens=True,
+            dynamic_draft_tokens=self.dynamic_draft,
             draft_confidence=self.draft_confidence,
         )
 
