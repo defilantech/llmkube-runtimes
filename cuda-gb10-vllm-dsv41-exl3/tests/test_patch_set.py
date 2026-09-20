@@ -12,7 +12,7 @@ def md5_prefix(p: Path) -> str:
 
 def test_every_listed_file_matches_md5sums():
     lines = [l.split() for l in (PATCHES / "MD5SUMS.txt").read_text().splitlines() if l.strip()]
-    assert len(lines) == 15, lines
+    assert len(lines) == 16, lines
     for want, name in lines:
         assert md5_prefix(PATCHES / name) == want, name
 
@@ -44,3 +44,14 @@ def test_vendored_levers_carry_their_gates_and_the_limit_diff_targets_the_kernel
     for f in ("src/cuda_exl3/csrc/bindings.cpp", "src/cuda_exl3/csrc/exl3_had.cuh", "src/cuda_exl3/csrc/hadamard.cu"):
         assert f"+++ b/{f}" in diff, f
     assert "float limit" in diff, "the diff should add the limit argument"
+
+
+def test_kvgroup_is_gated_and_otherwise_the_base_file():
+    """bot-lab-21's finer KV group packing (issue #46) rides on the base image's own kv_cache_utils.py, off by default."""
+    src = (PATCHES / "kv_cache_utils.py").read_text()
+    assert 'os.environ.get("DSV41_KV_GROUPING", "") == "fine"' in src
+    assert "lower_bound=1 if _fine_grouping else min_repeats_per_group" in src
+    assert src.count("_fine_grouping") == 3, "one read, one log guard, one lower_bound"
+    baseline = {l.split()[1]: l.split()[0] for l in (PATCHES / "MD5SUMS.image-baseline-e47aa780b.txt").read_text().splitlines()
+                if l.strip() and not l.startswith("#")}
+    assert baseline["v1/core/kv_cache_utils.py"] == "ba85578d", "the drift gate must know the base file this hunk was derived from"

@@ -263,6 +263,16 @@ on code (tonyd2wild's switch: 25.4 to 26.8 without, 51.5 with). Measured on cand
 `@sha256:8dab469dd37e28c26612648079eb075eb3152dc2dacd8347c55a6f2aba037b54` (rc4: same vLLM tree, plus the license texts). See
 the LLMKube multi-node guide's "Three-Spark ring" section.
 
+**A third gate, off by default, for context rather than speed (#46).** `DSV41_KV_GROUPING=fine` is bot-lab-21's finer
+KV cache group packing: vLLM's upstream floor makes every KV group hold at least three repeats of the widest
+mixed-page pattern, so the shared pool block is sized by the three ratio-2 kv-source layers (138,240 B) while the
+ratio-1 layer fills 46,080 B of each block it is charged. With the floor at one repeat the block is 46,080 B and every
+group fills 81 to 100 percent of it; their simulation put it at +43 to +70 percent tokens for the same bytes, at the
+cost of 47 block tables of scheduler work per step instead of 17. The gain exists only because of the SM12x page
+patch this image ships. The hunk is applied to the base image's own `kv_cache_utils.py` (byte-identical to the file
+they patched) and an in-image test reproduces the ring's logged pool in default mode before asserting the gain. It
+is a canary until the ring measures decode step time at two streams with it on.
+
 ## Coder agent image
 
 `ghcr.io/defilantech/llmkube-foreman-agent-coder` — a Foreman agent that can run its own coder gate.

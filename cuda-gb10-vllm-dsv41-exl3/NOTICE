@@ -21,6 +21,12 @@ Also from tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark (MIT, same license text)
   patches/exl3-limit.diff and applied to the cuda-exl3 source before the build; clamp semantics follow bot-lab-21's
   exl3_moe.py overlay). Both vLLM diffs modify vLLM files (Apache License 2.0).
 
+bot-lab-21/DeepSeek-V4.1-Flash-EXL3-3.5bpw-Pollard, directory recipe/patches/kvgroup (MIT for their hunk and the
+simulation; README dated 2026-09-11): the DSV41_KV_GROUPING=fine change to _get_packed_kv_cache_groups, re-applied
+to this image's copy of vllm/v1/core/kv_cache_utils.py (vllm-project/vllm, Apache License 2.0; the base file is
+byte-identical to the one they patched, md5 ba85578d) as patches/kv_cache_utils.py, off unless the env is set.
+tests/test_kvgroup_sim.py adapts their sim_kvgroup.py to the three-Spark ring's configuration.
+
 vllm-project/vllm, file vllm/models/deepseek_v4_1/nvidia/model.py at commit
 e47aa780bccf59f59dfa2cbb18e17a10b4fe69ba. Apache License 2.0.
 

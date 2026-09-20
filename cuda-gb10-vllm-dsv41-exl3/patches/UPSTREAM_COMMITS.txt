@@ -5,3 +5,4 @@ flashinfer-ai/flashinfer 07869c61ba581e6d6b8ad8d142f4a6c89b707cc1
 tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark runs/2026-09-14-speedrun/patches/dsv41-exl3-sr1/engram-fast.diff 6481da9d2235624c860c528c7bbb7296f1d9c2c5
 tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark runs/2026-09-14-speedrun/patches/idxsplit-draft/sparse_attn_indexer.idxsplit.diff c418998b19566d07e61190de592f32a2ebff2a20
 tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark runs/2026-09-19-speedrun2/patches/exl3-limit/limit.diff f6534dc6a5327219b7c23bd207ed279cfd7023e1
+bot-lab-21/DeepSeek-V4.1-Flash-EXL3-3.5bpw-Pollard recipe/patches/kvgroup (README 2026-09-11; their patched kv_cache_utils.py md5 c86d8833 over base ba85578d, the same base this image carries; hunk re-applied here, patched md5 d66f5fa3)
