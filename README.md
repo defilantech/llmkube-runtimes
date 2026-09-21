@@ -251,8 +251,18 @@ without a rebuild: `DSV41_ENGRAM_FAST=1` (Engram rows gathered through a numpy m
 GPU; his ring measurement: prefill +16% to +48% under 100K tokens, -7% at 298K) and `DSV41_INDEXER_TP_SPLIT=1`
 (each rank computes the lightning indexer's top-k for a slice of the prefill rows, then one all-gather; the
 value must be identical on every node; +6% prefill at 131K, neutral below 40K). The vendored `engram.py` is
-byte-identical to the file his 2026-09-14 speed run shipped (md5 `e84c7305`). Tier-2 numbers for each gate
-land in the LLMKube ring sample as they are measured.
+byte-identical to the file his 2026-09-14 speed run shipped (md5 `e84c7305`).
+
+**Tier 2 on candidate `@sha256:24b44f422363117990b4d2edfbdea1399ff89a4a74a075cd773f52704ef5b98c`** (the merge of #45,
+measured 2026-09-20 on the three-Spark ring at 512K context with vision, DSpark k=5, a 4.2 GiB KV pin and the memory
+guard live). Both diffs were bit-exact on the candidate first: the Engram gather at 288 and 98,304 rows, the indexer split
+at tp=3 byte-equal to the unsplit reference. Then one env flip per boot, each row gated by the vision stripe test, a
+10K / 40K / 450K-token cold-prefill probe and a count-to-100 decode, with the guard logging no drops on any row.
+Gates off, so the kernel change alone: prefill 2,127 / 2,142 / 1,559 tok/s, decode 84 to 85, and the
+`has no 'limit' argument` warning gone from the boot log. `DSV41_ENGRAM_FAST=1`: 2,216 / 2,249 / 1,655, decode 86 to 89.
+Plus `DSV41_INDEXER_TP_SPLIT=1`: 2,209 / 2,262 / 1,740, decode 80 to 90. Against the previous candidate
+`@sha256:8dab469d...` the single 450K-token prefill is +20% (1,447 to 1,740); pool, vision and the MemFree floor under
+that prefill (8 to 9.5 GiB) are unchanged. The LLMKube ring sample pins this digest with both gates on.
 
 arm64 only. First green build on `ubuntu-24.04-arm`: 30 minutes for the pull_request run (FlashInfer source
 build, cuda-exl3 compile and the serial JIT prewarm dominate; the tag run that also pushes and attests the
