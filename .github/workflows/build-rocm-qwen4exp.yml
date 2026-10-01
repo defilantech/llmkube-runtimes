@@ -1,0 +1,142 @@
+name: build-rocm-qwen4exp
+
+on:
+  push:
+    branches: [main]
+    paths: ['rocm-qwen4exp/**', 'scripts/**', '.github/workflows/build-rocm-qwen4exp.yml']
+    tags: ['rocm-qwen4exp-v*']
+  pull_request:
+    paths: ['rocm-qwen4exp/**', 'scripts/**', '.github/workflows/build-rocm-qwen4exp.yml']
+  workflow_dispatch: {}
+  # NO schedule, for the same reason as build-vulkan-qwen4exp: every input is
+  # immutable (an upstream tag with its commit SHA asserted, base images pinned
+  # by digest, vendored patches in-tree), so a weekly rebuild would tell us
+  # nothing we act on. The ROCm apt packages in the runtime stage are the one
+  # moving input, and the production build-rocm canary already watches those.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-rocm-qwen4exp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Single image: the server runtime, which also carries llama-perplexity for
+  # the bake-off's KL-divergence arm (same build, same commit, same patches).
+  image:
+    # Pinned rather than ubuntu-latest: the rocm/dev builder alone is ~25GB and
+    # the disk-reclaim step below is written against this image's layout.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write       # push candidate to GHCR (trusted refs only)
+      id-token: write        # keyless provenance attestation
+      attestations: write
+    env:
+      IMAGE: ghcr.io/defilantech/llmkube-llama-rocm-qwen4exp
+      LOCAL: ghcr.io/defilantech/llmkube-llama-rocm-qwen4exp:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # Cheap static check before the multi-GB base pull.
+      - name: Dockerfile parse check
+        run: python3 scripts/dockerfile-parse-check.py rocm-qwen4exp/Dockerfile
+
+      # The rocm/dev-ubuntu-24.04 -complete builder image is ~25GB; the default
+      # hosted-runner disk fills up before the build starts. Same reclaim as
+      # build-rocm.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          df -h /
+
+      # The HIP build is memory-heavy; same swap headroom as build-rocm.
+      - name: Add swap headroom
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build image (load locally for the gate)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: rocm-qwen4exp
+          target: server
+          load: true
+          tags: ${{ env.LOCAL }}
+          cache-from: type=gha,scope=rocm-qwen4exp-server
+          cache-to: type=gha,mode=max,scope=rocm-qwen4exp-server
+
+      - name: ROCm gate (binaries run, HIP backend dlopen in the runtime image, APPLIED.md matches)
+        run: ./scripts/rocm-qwen4exp-gate.sh "${{ env.LOCAL }}"
+
+      - name: Qwen4exp gate (arch, MTP draft graph, rendered flag surface)
+        run: ./scripts/qwen4exp-gate.sh "${{ env.LOCAL }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.LOCAL }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-rocm-qwen4exp-${{ github.sha }}
+          path: sbom.spdx.json
+
+      # --- Trusted refs only. Fork PRs build + gate above, but never reach here:
+      # GITHUB_TOKEN is read-only for them and these steps are gated off
+      # pull_request. The candidate is unsigned-for-trust; the out-of-band
+      # promoter smoke-tests it on real gfx1151 before anything consumes it.
+      # The promoter's smoke proves the ROCm device comes up, NOT qwen4exp, MTP
+      # or the depth patches; those are measured on the node by the bake-off. ---
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push candidate
+        if: github.event_name != 'pull_request'
+        run: |
+          CAND="${IMAGE}:candidate-${GITHUB_SHA}"
+          docker tag "${LOCAL}" "${CAND}"
+          docker push "${CAND}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${CAND}" | cut -d@ -f2)"
+          echo "DIGEST=${DIGEST}" >> "${GITHUB_ENV}"
+          echo "Pushed ${CAND} (${DIGEST})"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
+
+  # Stable required status check. Job id is `build`, matching build.yml and the
+  # other variant workflows, so branch protection's required `build` context is
+  # reported by whichever of them a PR actually triggers.
+  build:
+    needs: [image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the image build passed
+        run: |
+          result="${{ needs.image.result }}"
+          echo "image result: ${result}"
+          test "${result}" = "success"

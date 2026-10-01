@@ -1,0 +1,79 @@
+NOTICE for llmkube-llama-rocm-qwen4exp
+======================================
+
+This runtime image is Apache-2.0 (the llmkube-runtimes repository license) and
+incorporates MIT-licensed upstream material. Attribution below is a condition
+of that license, not a courtesy.
+
+Nothing here crosses a license boundary. Every vendored byte is llama.cpp,
+which is MIT throughout, and each patch is a contribution to llama.cpp itself
+rather than code from a separate project.
+
+
+Vendored MIT material
+---------------------
+
+    llama.cpp
+    https://github.com/ggml-org/llama.cpp
+    tag b10794, commit f9f09f02cc44d87d842dbd2d578857d92d4bb63b
+    Copyright (c) 2023-2026 The ggml authors
+    MIT License, reproduced in LICENSE.upstream-MIT
+
+    patches/0001-qwen4exp-mtp.patch
+    The cumulative diff of ggml-org/llama.cpp pull request #28243,
+    "models: Qwen3.8-Flash-Next MTP", author danielhanchen.
+    https://github.com/ggml-org/llama.cpp/pull/28243
+    Byte-identical to vulkan-qwen4exp/patches/0001-qwen4exp-mtp.patch.
+
+    patches/0010-qwen4exp-qsa-gather-decode.patch
+    The diff of ggml-org/llama.cpp pull request #28213,
+    "qwen4exp : gather-based sparse attention for QSA decode",
+    author abdel-darwish-27 (Abdel Darwish), head commit
+    beed2f78ac42cf16710b763e6f3ba20665c6d233. Unmodified.
+    https://github.com/ggml-org/llama.cpp/pull/28213
+
+    patches/0011-qwen4exp-pooled-key-cache.patch
+    The diff of ggml-org/llama.cpp pull request #28699,
+    "qwen4exp: incremental pooled-key cache for the QSA indexer",
+    author Rhonstin (Bohdan Kikot), head commit
+    141f3f5646aa15e88d53198610a7540f4f4b0d71. Unmodified. The pull request
+    credits the original implementation to apepojken's qwen4exp-spec-mtp
+    fork (commits 472b758 and parts of 843d575).
+    https://github.com/ggml-org/llama.cpp/pull/28699
+
+    patches/0012-lazy-direct-row-reads.patch
+    A minimal backport of ggml-org/llama.cpp pull request #29030,
+    "qwen4exp/gemma4: gather lazy tensor rows with direct reads",
+    author pwilkin (Piotr Wilkin, ilintar), head commit
+    7dc9a32df45c56ec48071de0d0d34466c6ce345c. Changes from the pull
+    request's diff are whitespace, include context, one dropped hunk that
+    deletes code absent from the base, and three dropped README hunks; they
+    are listed exactly in patches/APPLIED.md.
+    https://github.com/ggml-org/llama.cpp/pull/29030
+
+
+Build-time dependencies
+-----------------------
+
+    rocm/dev-ubuntu-24.04:7.2.4-complete   pinned by digest (build stage only)
+    ubuntu:24.04                            pinned by digest
+    ROCm 7.2.4 runtime libraries            AMD apt repo (hip-runtime-amd,
+                                            rocblas, hipblas, hipblaslt,
+                                            rocm-device-libs)
+
+
+Model artifacts, which this image does NOT contain
+--------------------------------------------------
+
+The image ships no weights. The artifacts it is built to serve carry their own
+terms, and those terms follow the weights rather than this image:
+
+    Qwen3.8-Flash-Next GGUF
+      unsloth/Qwen3.8-Flash-Next-GGUF
+      license_name qwen-community-1.0
+      https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF
+
+    MTP draft head
+      MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf, from the same repository
+      Self-contained head only; see vulkan-qwen4exp/Dockerfile for why the
+      `shared-` heads do not load on a #28243 build.
