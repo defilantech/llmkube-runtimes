@@ -14,7 +14,7 @@ row per line and do not put a `|` inside a cell.
 
 | File | Upstream | Head SHA | Author | Backend scope | Form | Marker | sha256 |
 |------|----------|----------|--------|---------------|------|--------|--------|
-| 0001-qwen4exp-mtp.patch | ggml-org/llama.cpp#28243 | (vendored earlier, see vulkan-qwen4exp) | danielhanchen | common (model graph, converter) | exact PR diff, byte-identical to vulkan-qwen4exp/patches | QWEN4EXP MTP: | 82d13e06d2f259b587b9ac8c8b91f34d633b6089006da88bd3422a44541db3b6 |
+| 0001-qwen4exp-mtp.patch | ggml-org/llama.cpp#28243 | not recorded at vendoring (vulkan-qwen4exp, runtimes #42, 2026-09-14); the PR head is now 6fcaa16f4b360649933a54d1f91ad40ed35c0e11 and its diff differs from this file | danielhanchen | common (model graph, converter) | exact PR diff, byte-identical to vulkan-qwen4exp/patches | QWEN4EXP MTP: | 82d13e06d2f259b587b9ac8c8b91f34d633b6089006da88bd3422a44541db3b6 |
 | 0010-qwen4exp-qsa-gather-decode.patch | ggml-org/llama.cpp#28213 | beed2f78ac42cf16710b763e6f3ba20665c6d233 | abdel-darwish-27 | common (src/, backend-agnostic graph) | exact PR diff | QWEN4EXP_QSA_GATHER | 657f615e33294f99c6d1d9738b0382f9078f2fc81aad4540ed0e5cd24520cbf1 |
 | 0011-qwen4exp-pooled-key-cache.patch | ggml-org/llama.cpp#28699 | 141f3f5646aa15e88d53198610a7540f4f4b0d71 | Rhonstin | common (src/, backend-agnostic memory + graph) | exact PR diff (PR is a DRAFT) | LLAMA_QSA_NO_POOLED_CACHE | 8de1ec95e28282464a6ae0d9182f859f68133176b55d4b8ac33f2d772cf6ffef |
 | 0012-lazy-direct-row-reads.patch | ggml-org/llama.cpp#29030 | 7dc9a32df45c56ec48071de0d0d34466c6ce345c | pwilkin | common (src/ loader, graph, new lazy reader) | minimal backport, see below | row reads enabled | a1db927d2fbd114cb4b5342d5a126231f316d9bdb1dbd22747c84625735155d8 |
