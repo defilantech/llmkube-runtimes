@@ -147,10 +147,30 @@ document said thinking is handled by the template default and pointed at
 `--reasoning off`. Both halves were wrong, and this is worth spelling out
 because every obvious control surface here is a dead end.
 
-The shipped template already sets `enable_thinking` to false, and passing the
-kwarg explicitly changes nothing, because it was already false. **The model
-emits reasoning anyway.** `--reasoning off` was never verified to stop
-generation as opposed to relocating the output, so do not rely on it either.
+The shipped template already sets `enable_thinking` to false, so passing the
+kwarg explicitly as false changes nothing: it was already false. **The model
+emits reasoning anyway.**
+
+Be precise about the direction, though, because an earlier version of this
+section was not. Passing `true` **is** a real change. The template branches on
+the value, and the two branches are not "reason" versus "do not reason", they
+are which tag the generation prompt opens with
+(`models/templates/poolside-Laguna-S-2.1.jinja` at the pinned SHA):
+
+```jinja
+{%- if enable_thinking -%}
+  {{- '<think>' -}}
+{%- else -%}
+  {{- '</think>' -}}
+{%- endif -%}
+```
+
+The false branch hands the model a **pre-closed** `</think>`. So the kwarg is
+inert in the direction people actually reach for it, which is not the same as
+inert. Credit to [TheTom](https://github.com/TheTom) for the correction.
+
+`--reasoning off` was never verified to stop generation as opposed to
+relocating the output, so do not rely on it either.
 
 What actually works is a **named professional identity in the system prompt**.
 Measured on gfx1151, same coding prompt, temp 0.6:
