@@ -16,9 +16,9 @@ on:
       - 'scripts/dockerfile-parse-check.py'
       - '.github/workflows/build-rocm-gufo.yml'
   workflow_dispatch: {}
-  # NO schedule. Every input is immutable: Gufo by commit SHA with its
-  # version.txt asserted, the ROCm builder and the ubuntu runtime base by
-  # digest, and the ROCm runtime packages from AMD's versioned 7.2.3 apt path. A weekly
+  # NO schedule. Every input is immutable: Gufo by release tag with its commit
+  # SHA asserted, the ROCm builder and the ubuntu runtime base by digest, and
+  # the ROCm runtime packages from AMD's versioned 7.2.3 apt path. A weekly
   # rebuild would recompile Gufo's HIP kernels to restate what the pins say.
 
 permissions:

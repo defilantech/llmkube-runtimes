@@ -32,16 +32,16 @@ run() { docker run --rm --entrypoint "$1" "${IMAGE}" "${@:2}"; }
 
 echo "== 1. pinned commit recorded and consistent =="
 want_sha="$(sed -n 's/^ARG GUFO_SHA=\([0-9a-f]\{40\}\)$/\1/p' "${DOCKERFILE}")"
-want_version_str="$(sed -n 's/^ARG GUFO_VERSION=\([0-9][0-9.]*\)$/\1/p' "${DOCKERFILE}")"
-if [ -z "${want_sha}" ] || [ -z "${want_version_str}" ]; then
-  echo "FAIL: could not read a full ARG GUFO_SHA / ARG GUFO_VERSION from ${DOCKERFILE}"
+want_ref="$(sed -n 's/^ARG GUFO_REF=\(v[0-9][0-9.]*\)$/\1/p' "${DOCKERFILE}")"
+if [ -z "${want_sha}" ] || [ -z "${want_ref}" ]; then
+  echo "FAIL: could not read a full ARG GUFO_SHA / ARG GUFO_REF from ${DOCKERFILE}"
   exit 1
 fi
 file_sha="$(run cat /opt/llmkube/gufo-commit)"
 label_sha="$(docker inspect --format '{{ index .Config.Labels "io.llmkube.gufo.sha" }}' "${IMAGE}")"
 version_line="$(run /usr/local/bin/gufo --version)"
-want_version="gufo version ${want_version_str} (${want_sha})"
-echo "Dockerfile:            ${want_version_str} ${want_sha}"
+want_version="gufo version ${want_ref#v} (${want_sha})"
+echo "Dockerfile:            ${want_ref} ${want_sha}"
 echo "/opt/llmkube:          ${file_sha}"
 echo "label:                 ${label_sha}"
 echo "gufo --version:        ${version_line}"
@@ -167,4 +167,4 @@ fi
 echo "PASS: production install only"
 
 echo "== verdict =="
-echo "PASS: ${IMAGE} is Gufo ${want_version_str} (${want_sha}), packaged correctly, no FFmpeg"
+echo "PASS: ${IMAGE} is Gufo ${want_ref} (${want_sha}), packaged correctly, no FFmpeg"
