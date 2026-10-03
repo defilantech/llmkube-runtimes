@@ -259,94 +259,217 @@ def test_pinned_wheels_are_hashed_https_urls():
     assert all(len(r) in (2, 4) for r in rows), rows
 
 
-# ---- carried upstream patches (patches/<name>/*.patch + APPLIED.md) ----
+# ---- carried patches (patches/<name>/*.patch + APPLIED.md), for b12x and for the vLLM fork alike ----
 
-PATCH_NEW = "b12x/attention/routes.py"
-PATCH_BODY = "ROUTES = 'switchless ring routes'\n"
+APPLY = IMAGE_DIR / "build" / "apply_carried_patches.sh"
+# Per checkout: a tracked file the patch modifies, the file it creates, and the created file's body.
+CARRY = {
+    "b12x": ("b12x/attention/mla.py", "b12x/attention/routes.py", "ROUTES = 'switchless ring routes'\n"),
+    "vllm": ("vllm/models/deepseek_v4_1/attention.py", "vllm/models/deepseek_v4_1/trellis.py",
+             "CODEBOOKS = 'switchless ring routes'\n"),
+}
+CARRIED = pytest.mark.parametrize("name", sorted(CARRY))
 
 
-def _carry_patch(image, *, apply_extra: str | None = None, record_sha: str | None = None,
-                 marker: str = "switchless ring routes") -> Path:
-    """Make a patch on a scratch copy of the b12x checkout, record it, apply it to the real checkout and install."""
-    co = image["src"] / "b12x"
-    scratch = co.parent / "b12x-scratch"
+def _carry_patch(image, name: str = "b12x", *, apply_extra: str | None = None, record_sha: str | None = None,
+                 marker: str = "switchless ring routes", fname: str = "0001-routes.patch",
+                 edit: str = "K = 3\n", new: tuple[str, str] | None = None, modify: str | None = None) -> Path:
+    """Make a patch on a scratch copy of the <name> checkout, record it, apply it to the real checkout with the
+    Dockerfile's script, and install the patched files."""
+    modified, created, body = CARRY[name]
+    if new is not None:
+        created, body = new
+    if modify is not None:
+        modified = modify
+    co = image["src"] / name
+    scratch = co.parent / f"{name}-scratch"
     shutil.copytree(co, scratch)
-    (scratch / "b12x" / "attention" / "mla.py").write_text("K = 3\n")
-    (scratch / PATCH_NEW).write_text(PATCH_BODY)
+    # Earlier carried patches are already applied to the checkout: this patch is made on top of them, in order.
+    _git(scratch, "add", "-A")
+    _git(scratch, "commit", "-q", "--allow-empty", "-m", "pin plus earlier carried patches")
+    (scratch / modified).write_text(edit)
+    (scratch / created).write_text(body)
     _git(scratch, "add", "-A")
     patch = _git(scratch, "diff", "--cached", "--binary") + "\n"
     shutil.rmtree(scratch)
-    pdir = image["root"] / "patches" / "b12x"
+    pdir = image["root"] / "patches" / name
     pdir.mkdir(parents=True, exist_ok=True)
-    p = pdir / "0001-routes.patch"
+    p = pdir / fname
     p.write_text(patch)
     sha = record_sha or hashlib.sha256(p.read_bytes()).hexdigest()
-    (pdir / "APPLIED.md").write_text(
-        "| File | Upstream | Head SHA | Author | Scope | Form | Marker | sha256 |\n"
-        "|------|----------|----------|--------|-------|------|--------|--------|\n"
-        f"| 0001-routes.patch | local-inference-lab/b12x#1 | {'c' * 40} | t | comm | exact PR diff | {marker} | {sha} |\n")
-    # The Dockerfile's sequence: apply, then `git add -N` the patch's new files (git 2.43's apply --intent-to-add
-    # drops the rest of the index).
-    _git(co, "apply", str(p))
-    for line in _git(co, "apply", "--summary", str(p)).splitlines():
-        if line.strip().startswith("create mode "):
-            _git(co, "add", "-N", "--", line.split()[-1])
+    applied = pdir / "APPLIED.md"
+    if not applied.is_file():
+        applied.write_text("| File | Upstream | Head SHA | Author | Scope | Form | Marker | sha256 |\n"
+                           "|------|----------|----------|--------|-------|------|--------|--------|\n")
+    with applied.open("a") as f:
+        f.write(f"| {fname} | example/{name}#1 | {'c' * 40} | t | x | exact PR diff | {marker} | {sha} |\n")
+    # Apply only this patch (a scratch dir holding just it), as the Dockerfile's script does for each patch in order.
+    one = image["root"] / f"one-{name}"
+    one.mkdir(exist_ok=True)
+    for old in one.glob("*.patch"):
+        old.unlink()
+    shutil.copy(p, one / fname)
+    subprocess.run(["bash", str(APPLY), str(one), str(co)], check=True, capture_output=True, text=True)
     if apply_extra:
         (co / apply_extra).write_text("drift\n")
-    for rel in ("b12x/attention/mla.py", PATCH_NEW):
+    for rel in (modified, created):
         (image["site"] / rel).write_text((co / rel).read_text())
     return p
 
 
-def test_carried_patch_recorded_and_applied_passes(image):
-    _carry_patch(image)
+@CARRIED
+def test_carried_patch_recorded_and_applied_passes(image, name):
+    _carry_patch(image, name)
     r = run_gate(image)
     assert r.returncode == 0, r.stderr
 
 
-def test_carried_patch_survives_git_clean(image):
-    # The image runs `git clean -fdxq` after installing; `git add -N` keeps the patch's new file.
-    _carry_patch(image)
-    _git(image["src"] / "b12x", "clean", "-fdxq")
+def test_carried_patches_on_both_checkouts_pass(image):
+    _carry_patch(image, "b12x")
+    _carry_patch(image, "vllm")
     r = run_gate(image)
     assert r.returncode == 0, r.stderr
 
 
-def test_change_beyond_the_carried_patch_fails(image):
-    _carry_patch(image, apply_extra="b12x/__init__.py")
+def test_two_patches_on_one_checkout_pass_and_each_needs_its_row(image):
+    _carry_patch(image, "b12x")
+    _carry_patch(image, "b12x", fname="0002-mcg.patch", edit="K = 4\n", marker="mcg trellis",
+                 new=("b12x/attention/independent.py", "MCG = 'mcg trellis'\n"), modify="b12x/attention/__init__.py")
     r = run_gate(image)
-    assert r.returncode == 1 and "b12x/__init__.py" in r.stderr
+    assert r.returncode == 0, r.stderr
+    applied = image["root"] / "patches" / "b12x" / "APPLIED.md"
+    applied.write_text("".join(l for l in applied.read_text().splitlines(True) if "0002-mcg.patch" not in l))
+    r = run_gate(image)
+    assert r.returncode == 1 and "0002-mcg.patch" in r.stderr
 
 
-def test_carried_patch_with_wrong_recorded_sha_fails(image):
-    _carry_patch(image, record_sha="d" * 64)
+@CARRIED
+def test_carried_patch_survives_git_clean(image, name):
+    # The image runs `git clean -fdxq` after installing b12x; `git add -N` keeps the patch's new file.
+    _carry_patch(image, name)
+    _git(image["src"] / name, "clean", "-fdxq")
+    r = run_gate(image)
+    assert r.returncode == 0, r.stderr
+
+
+@CARRIED
+def test_change_beyond_the_carried_patch_fails(image, name):
+    _carry_patch(image, name, apply_extra=f"{name}/__init__.py")
+    r = run_gate(image)
+    assert r.returncode == 1 and f"{name}/__init__.py" in r.stderr
+
+
+@CARRIED
+def test_carried_patch_with_wrong_recorded_sha_fails(image, name):
+    _carry_patch(image, name, record_sha="d" * 64)
     r = run_gate(image)
     assert r.returncode == 1 and "0001-routes.patch" in r.stderr and "sha256" in r.stderr
 
 
-def test_carried_patch_without_an_applied_row_fails(image):
-    p = _carry_patch(image)
+@CARRIED
+def test_carried_patch_without_an_applied_row_fails(image, name):
+    p = _carry_patch(image, name)
     (p.parent / "APPLIED.md").write_text("| File | Upstream | Head SHA | Author | Scope | Form | Marker | sha256 |\n")
     r = run_gate(image)
     assert r.returncode == 1 and "0001-routes.patch" in r.stderr
 
 
-def test_installed_new_file_from_a_carried_patch_must_match(image):
-    _carry_patch(image)
-    (image["site"] / PATCH_NEW).write_text("ROUTES = 'stale'\n")
+@CARRIED
+def test_installed_new_file_from_a_carried_patch_must_match(image, name):
+    _carry_patch(image, name)
+    created = CARRY[name][1]
+    (image["site"] / created).write_text("STALE = 1\n")
     r = run_gate(image)
-    assert r.returncode == 1 and PATCH_NEW in r.stderr
+    assert r.returncode == 1 and created in r.stderr
 
 
-def test_carried_patch_marker_must_be_installed(image):
-    _carry_patch(image, marker="not in any installed file")
+@CARRIED
+def test_installed_modified_file_from_a_carried_patch_must_match(image, name):
+    # The vLLM case: a wheel built from the unpatched pin installs the pin's file, not the patched one.
+    _carry_patch(image, name)
+    modified = CARRY[name][0]
+    (image["site"] / modified).write_text(dict(VLLM_FILES, **B12X_FILES)[modified])
+    r = run_gate(image)
+    assert r.returncode == 1 and modified in r.stderr
+
+
+@CARRIED
+def test_carried_patch_marker_must_be_installed(image, name):
+    _carry_patch(image, name, marker="not in any installed file")
     r = run_gate(image)
     assert r.returncode == 1 and "marker" in r.stderr
 
 
-def test_recorded_but_unapplied_patch_fails(image):
-    p = _carry_patch(image)
-    _git(image["src"] / "b12x", "apply", "-R", str(p))
-    _git(image["src"] / "b12x", "reset", "-q")
+@CARRIED
+def test_recorded_but_unapplied_patch_fails(image, name):
+    p = _carry_patch(image, name)
+    _git(image["src"] / name, "apply", "-R", str(p))
+    _git(image["src"] / name, "reset", "-q")
     r = run_gate(image)
     assert r.returncode == 1 and "0001-routes.patch" in r.stderr
+
+
+@CARRIED
+def test_reversing_the_carried_patch_must_restore_the_pin(image, name):
+    # A tracked file changed by the patch AND edited further: the changed-file set still matches, but reversing the
+    # recorded patch no longer applies, so the checkout is not the pin plus that patch.
+    _carry_patch(image, name)
+    modified = CARRY[name][0]
+    co = image["src"] / name
+    (co / modified).write_text("K = 99\n")
+    (image["site"] / modified).write_text("K = 99\n")
+    r = run_gate(image)
+    assert r.returncode == 1 and "reversing" in r.stderr
+
+
+def test_unpatched_dirty_vllm_checkout_still_fails(image):
+    # Without patches/vllm, any change to the fork checkout is drift, as before.
+    (image["src"] / "vllm" / "vllm" / "__init__.py").write_text("V = 2\n")
+    r = run_gate(image)
+    assert r.returncode == 1 and "vllm/__init__.py" in r.stderr
+
+
+# ---- the repository's own carried patches, as committed ----
+
+def _applied_table(pdir: Path) -> dict[str, list[str]]:
+    rows = {}
+    for line in (pdir / "APPLIED.md").read_text().splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 8 and cells[0].endswith(".patch"):
+            rows[cells[0]] = cells
+    return rows
+
+
+@pytest.mark.parametrize("name", ["b12x", "vllm"])
+def test_committed_patches_are_recorded_scoped_and_marked(name):
+    pdir = IMAGE_DIR / "patches" / name
+    patches = sorted(pdir.glob("*.patch"))
+    assert patches, f"patches/{name} carries no patch"
+    rows = _applied_table(pdir)
+    assert sorted(rows) == [p.name for p in patches], "every patch has exactly one APPLIED.md row and vice versa"
+    for p in patches:
+        _, _, head, _, _, _, marker, sha = rows[p.name]
+        assert re.fullmatch(r"[0-9a-f]{40}", head), (p.name, head)
+        assert hashlib.sha256(p.read_bytes()).hexdigest() == sha, p.name
+        text = p.read_text()
+        files = re.findall(r"^diff --git a/(\S+) b/\S+$", text, re.M)
+        assert files and all(f.startswith(name + "/") for f in files), (p.name, files)
+        added = "".join(l[1:] for l in text.splitlines(True) if l.startswith("+") and not l.startswith("+++"))
+        assert marker in added, f"{p.name}: marker {marker!r} is not in a line the patch adds"
+
+
+def test_committed_patch_files_do_not_overlap():
+    seen: dict[str, str] = {}
+    for p in sorted((IMAGE_DIR / "patches").glob("*/*.patch")):
+        for f in re.findall(r"^diff --git a/(\S+) b/\S+$", p.read_text(), re.M):
+            assert f not in seen, f"{f} is changed by both {seen[f]} and {p.name}"
+            seen[f] = p.name
+
+
+@pytest.mark.skipif(not (IMAGE_DIR / "Dockerfile").is_file(), reason="the image ships no Dockerfile")
+def test_dockerfile_commit_args_match_the_pins():
+    pins = {r.split()[0]: r.split()[2] for r in (IMAGE_DIR / "patches" / "UPSTREAM_COMMITS.txt").read_text().splitlines()
+            if r.strip() and not r.startswith("#")}
+    df = (IMAGE_DIR / "Dockerfile").read_text()
+    assert f"ARG B12X_COMMIT={pins['b12x']}\n" in df
+    assert f"ARG VLLM_FORK_COMMIT={pins['vllm']}\n" in df

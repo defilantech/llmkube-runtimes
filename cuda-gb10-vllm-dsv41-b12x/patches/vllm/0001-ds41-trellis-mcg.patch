@@ -1,0 +1,47 @@
+diff --git a/vllm/models/deepseek_v4_1/trellis.py b/vllm/models/deepseek_v4_1/trellis.py
+index 5bff981ba..8968e5788 100644
+--- a/vllm/models/deepseek_v4_1/trellis.py
++++ b/vllm/models/deepseek_v4_1/trellis.py
+@@ -55,16 +55,19 @@ class DeepseekV41TrellisConfig(DeepseekV41FP8Config):
+             return cls.get_name()
+         return None
+ 
++    _CODEBOOK_BITS = {"lut_e4m3": (2,), "mcg": (3, 4, 5, 6)}
++
+     @classmethod
+     def from_config(cls, config):
+-        required = {
+-            "format_version": 1,
+-            "manifest": "trellis-manifest.json",
+-            "bits": 2,
+-            "codebook": "lut_e4m3",
+-        }
+-        if any(config.get(key) != value for key, value in required.items()):
+-            raise ValueError("DS4.1 requires the independent K2 trellis manifest")
++        codebook, bits = config.get("codebook"), config.get("bits")
++        if (
++            config.get("format_version") != 1
++            or config.get("manifest") != "trellis-manifest.json"
++            or bits not in cls._CODEBOOK_BITS.get(codebook, ())
++        ):
++            raise ValueError(
++                "DS4.1 requires an independent trellis manifest (lut_e4m3 K2 or mcg K3..K6)"
++            )
+         # This container preserves the source's UE8M0 block32 dense tensors.
+         return cls(
+             is_checkpoint_fp8_serialized=True,
+@@ -181,11 +184,13 @@ class IndependentTrellisMoEMethod(FusedMoEMethodBase):
+             backend,
+         )
+         logger.info(
+-            "Independent K2 trellis layer %d rank %d/%d: %d intermediate channels, "
++            "Independent trellis layer %d rank %d/%d (%s K%d): %d intermediate channels, "
+             "BF16 inputs, H128/FP16 transforms, SwiGLU limit %s",
+             self.layer_index,
+             rank,
+             tp,
++            source.config.codebook.value,
++            source.uniform_bits,
+             self.local_intermediate,
+             self.moe.swiglu_limit,
+         )

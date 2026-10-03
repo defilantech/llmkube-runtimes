@@ -9,3 +9,10 @@
 # torch declares nvidia-nccl-cu13==2.29.7, but the pinned base already ships 2.30.7 over it and so does this image
 # (Dockerfile step 3.3b): the three-Spark ring needs 2.30.7's subnet-aware NIC routing. Same conflict as the base.
 ^torch 2\.13\.0\+cu130 has requirement nvidia-nccl-cu13==2\.29\.7; platform_system == "Linux", but you have nvidia-nccl-cu13 2\.30\.7\.$
+
+# b12x at the evidence/ds41-x4t-serving-20260929 pin (6380e581) still declares the five CUTLASS DSL packages ==4.6.2;
+# upstream master moved them to 4.7.1 in 4bacd509 with no change under b12x/ (pins and tests only; its message records
+# the same selected GPU corpus passing on both). The vLLM fork requires nvidia-cutlass-dsl[cu13]==4.7.1, so the image
+# holds 4.7.1 (PINNED_DISTS.txt) and installs b12x --no-deps (Dockerfile step 3.3). Any other b12x requirement that is
+# missing or at the wrong version is still fatal.
+^b12x 1\.3\.0 has requirement (nvidia-cutlass-dsl(?:-libs-(?:base|core|cu12|cu13))?)==4\.6\.2, but you have \1 4\.7\.1\.$

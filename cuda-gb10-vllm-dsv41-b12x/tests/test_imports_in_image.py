@@ -217,3 +217,23 @@ def test_carried_b12x_ring_routing_patch_is_live():
     assert plan_routes(ring, 0, 2)[1] == [(0, 1), (2, 3)]
     assert plan_routes(ring, 0, 2)[2] == [(1, 0), (3, 2)]
     assert "ROCE_ABI_VERSION 5" in _proxy._SOURCE.read_text()
+
+
+def test_carried_mcg_trellis_patches_are_live():
+    # patches/vllm/0001 and patches/b12x/0002: the fork's DS4.1 trellis config and b12x's trellis-dense-checkpoint/1
+    # reader accept exllamav3 mcg K3..K6 as well as lut_e4m3 K2, and nothing else.
+    import pytest
+    from b12x.moe.checkpoints import independent
+    from vllm.models.deepseek_v4_1.trellis import DeepseekV41TrellisConfig
+
+    assert independent._CODEBOOK_BITS == {"lut_e4m3": (2,), "mcg": (3, 4, 5, 6)}
+    assert independent._MCG_SEED == 0xCBAC1FED
+
+    def cfg(codebook, bits):
+        return {"format_version": 1, "manifest": "trellis-manifest.json", "codebook": codebook, "bits": bits}
+
+    for codebook, bits in [("lut_e4m3", 2), ("mcg", 3), ("mcg", 4), ("mcg", 5), ("mcg", 6)]:
+        DeepseekV41TrellisConfig.from_config(cfg(codebook, bits))
+    for codebook, bits in [("mcg", 2), ("lut_e4m3", 3), ("mcg", 7), ("other", 3)]:
+        with pytest.raises(ValueError):
+            DeepseekV41TrellisConfig.from_config(cfg(codebook, bits))

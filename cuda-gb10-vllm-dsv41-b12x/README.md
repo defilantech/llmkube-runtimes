@@ -6,9 +6,32 @@ sm_121a). Every input is pinned: the vLLM base by digest, the fork and b12x by c
 (`patches/UPSTREAM_COMMITS.txt`), FlashInfer and the other load-bearing packages by version and, where downloaded
 directly, by sha256 (`patches/PINNED_DISTS.txt`). `build/pins_gate.py` fails the build on any drift.
 
-No source patches. The fork pads V4.1 attention from 64 heads / 8 output groups to 72 / 9 for TP3 itself
+The fork pads V4.1 attention from 64 heads / 8 output groups to 72 / 9 for TP3 itself
 (`vllm/model_executor/models/config.py`, `DeepseekV41ForCausalLMConfig.update_model_config_for_parallelism`), and
 its own test for that hook runs in the image.
+
+b12x is pinned at `6380e581`, the head of upstream's `evidence/ds41-x4t-serving-20260929` branch and the only ref
+with `b12x/moe/checkpoints/independent.py` (the trellis-dense-checkpoint/1 reader). Three source patches are carried
+on the pins until they land upstream, each recorded in `patches/<name>/APPLIED.md` and drift-gated by
+`build/pins_gate.py`: b12x#457 (switchless-ring RoCE routing), and a pair that lets the fork's DS4.1 trellis config
+(`patches/vllm/0001`) and b12x's checkpoint reader (`patches/b12x/0002`) load exllamav3 mcg K3..K6 trellis
+checkpoints as well as lut_e4m3 K2. The vLLM patch is applied before the compile, so the wheel is the pin plus
+exactly that patch. That pin still declares `nvidia-cutlass-dsl==4.6.2` (upstream master moved to 4.7.1 with no
+source change), so b12x is installed `--no-deps` against the fork's 4.7.1.
+
+Moving from the `0d6600e6` master line to the evidence branch drops three upstream master commits the evidence
+branch does not have:
+
+- `ba090286` "Restore tensor-based inference API compatibility": legacy tensor-based GEMM, MoE and attention entry
+  points over the typed preparation APIs (it adds `b12x/moe/fused_moe/_compat.py`, absent at `6380e581`), and
+  hasattr guards in `b12x/integration/vllm/loader.py` and `plugin.py`. The fork does not need it: its DS4.1 MoE
+  and attention paths build `b12x.preparation.PreparedCall` objects (`vllm/model_executor/layers/fused_moe/b12x.py`,
+  `vllm/models/deepseek_v4_1/attention.py`), its tensor-FP8 linear always passes an explicit `plan`, every
+  `from b12x... import` in the fork's `vllm/` resolves at `6380e581`, and the evidence loader's direct imports
+  (`file_source_tensor`, `safetensors_file_sources`, `enable_tqdm` from `weight_utils.py`) exist in the fork.
+- `0d6600e6` "Derive block-quantized launch heuristics from reuse and occupancy": launch tuning only
+  (`gemm/blockscaled/_tuning.py`, the W4A16 kernel, `fused_moe/_impl.py`).
+- `4bacd509` "Upgrade CUTLASS DSL dependencies to 4.7.1": pins and tests only, handled above.
 
 ## Build route
 
@@ -106,17 +129,20 @@ NOTICE says so, and the OCI label is `Apache-2.0 AND BSD-3-Clause AND MIT AND Li
   profiler-api) pinned by version from NVIDIA's ubuntu2404/sbsa repo. The base is a runtime image and torch's
   `ATen/cuda/CUDAContextLight.h` includes `cusparse.h` and `cusolverDn.h`. That stage is not shipped.
 - `build/deps_gate.py`: `pip check` conflicts fail the build when either side is vllm, b12x or a
-  `PINNED_DISTS.txt` package, unless a commented regex in `patches/PIP_CHECK_ALLOW.txt` (empty today) accepts it.
+  `PINNED_DISTS.txt` package, unless a commented regex in `patches/PIP_CHECK_ALLOW.txt` accepts it.
   Other inherited conflicts are printed. It also scans every installed distribution's License,
   License-Expression and classifiers for AGPL/Affero.
 
-- `build/pins_gate.py`: `/src/vllm` and `/src/b12x` are clean checkouts at the pinned commits of the pinned repos;
-  every tracked `vllm/**/*.py` and `b12x/**/*.py` is byte-identical in dist-packages; one vllm is installed and its
-  version carries the fork commit; each `PINNED_DISTS.txt` package is installed exactly once at its version; the
-  vLLM install record matches the wheel ARGs; vendored files match `MD5SUMS.txt` (none today). Both pin files
-  must name vllm and b12x (commits) and torch, flashinfer-python and b12x (versions), so an emptied file fails,
-  and origins must be exactly the pinned GitHub repo. `tests/test_pins.py`
-  breaks one pin at a time against real git fixtures.
+- `build/pins_gate.py`: `/src/vllm` and `/src/b12x` are checkouts at the pinned commits of the pinned repos, clean
+  or differing by exactly the carried patches (recorded sha256, changed files equal the patches' files, reversing
+  them restores the pin, each patched file installed byte-identical, each marker present).
+  - Every tracked `vllm/**/*.py` and `b12x/**/*.py` is byte-identical in dist-packages.
+  - One vllm is installed and its version carries the fork commit; each `PINNED_DISTS.txt` package is installed
+    exactly once at its version; the vLLM install record matches the wheel ARGs; vendored files match
+    `MD5SUMS.txt` (none today).
+  - Both pin files must name vllm and b12x (commits) and torch, flashinfer-python and b12x (versions), so an
+    emptied file fails, and origins must be exactly the pinned GitHub repo.
+  - `tests/test_pins.py` breaks one pin at a time against real git fixtures.
 - `tests/test_imports_in_image.py`: the V4.1 import line, pinned versions, b12x's `vllm.general_plugins` entries
   (including upstream launcher's `b12x_loader` check), `sm_121` in `vllm/_C`, and the fork's
   `tests/v1/attention/test_b12x_sparse_mla_api.py::test_deepseek_v41_tp3_padding_uses_generic_parallel_hook`.

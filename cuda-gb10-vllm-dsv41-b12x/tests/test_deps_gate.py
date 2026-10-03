@@ -112,3 +112,27 @@ def test_shipped_allowlist_tolerates_torchs_nccl_pin_only_at_2_30_7():
     assert deps_gate.classify_pip_check(line + "\n", OWNED, allow) == ([], [line])
     other = line.replace("2.30.7", "2.28.3")
     assert deps_gate.classify_pip_check(other + "\n", OWNED, allow)[0] == [other]
+
+
+def test_real_allowlist_accepts_exactly_the_b12x_cutlass_lines():
+    allow = deps_gate._rows(HERE.parent / "patches" / "PIP_CHECK_ALLOW.txt")
+    owned = OWNED | {"nvidia-cutlass-dsl-libs-base", "nvidia-cutlass-dsl-libs-core", "nvidia-cutlass-dsl-libs-cu12",
+                     "nvidia-cutlass-dsl-libs-cu13", "apache-tvm-ffi"}
+    pkgs = ["nvidia-cutlass-dsl"] + [f"nvidia-cutlass-dsl-libs-{s}" for s in ("base", "core", "cu12", "cu13")]
+    real = [f"b12x 1.3.0 has requirement {p}==4.6.2, but you have {p} 4.7.1." for p in pkgs]
+    fatal, tolerated = deps_gate.classify_pip_check("\n".join(real) + "\n", owned, allow)
+    assert fatal == [] and tolerated == real
+    near_misses = [
+        # cross-package: the installed side names a different cutlass package
+        "b12x 1.3.0 has requirement nvidia-cutlass-dsl==4.6.2, but you have nvidia-cutlass-dsl-libs-base 4.7.1.",
+        "b12x 1.3.0 has requirement nvidia-cutlass-dsl-libs-cu13==4.6.2, but you have nvidia-cutlass-dsl 4.7.1.",
+        # an installed version other than the fork's 4.7.1
+        "b12x 1.3.0 has requirement nvidia-cutlass-dsl==4.6.2, but you have nvidia-cutlass-dsl 4.8.0.",
+        # a requirer other than b12x
+        "quack-kernels 0.6.5 has requirement nvidia-cutlass-dsl==4.6.2, but you have nvidia-cutlass-dsl 4.7.1.",
+        # another b12x requirement
+        "b12x 1.3.0 has requirement apache-tvm-ffi<0.2,>=0.1.6, but you have apache-tvm-ffi 0.2.0.",
+        "b12x 1.3.0 requires apache-tvm-ffi, which is not installed.",
+    ]
+    fatal, tolerated = deps_gate.classify_pip_check("\n".join(near_misses) + "\n", owned, allow)
+    assert tolerated == [] and fatal == near_misses

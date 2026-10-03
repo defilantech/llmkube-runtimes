@@ -1,0 +1,148 @@
+diff --git a/b12x/moe/checkpoints/independent.py b/b12x/moe/checkpoints/independent.py
+index 5ad32fef..77070bf9 100644
+--- a/b12x/moe/checkpoints/independent.py
++++ b/b12x/moe/checkpoints/independent.py
+@@ -1,9 +1,10 @@
+ """Read independently transformed matrices from trellis-dense-checkpoint/1.
+ 
+-Each matrix stores native K16/N16 tile words and independent input/output
+-scale vectors. Tensor parallelism partitions complete H128 intermediate
+-blocks. The adapter only permutes codeword bytes and slices FP16 vectors;
+-it never decodes, rounds, or requantizes weights.
++Each matrix stores native K16/N16 tile words (16 x K int16 words per tile;
++lut_e4m3 K2 or exllamav3's mcg K3..K6) and independent input/output scale
++vectors. Tensor parallelism partitions complete H128 intermediate blocks.
++The adapter only permutes codeword bytes and slices FP16 vectors; it never
++decodes, rounds, or requantizes weights.
+ """
+ 
+ from __future__ import annotations
+@@ -22,14 +23,19 @@ from b12x.moe.fused_moe.source import TrellisExtent, TrellisSource
+ from b12x.moe.fused_moe.weights import ScaleFactors, TrellisWeights
+ 
+ 
++# Codebooks this container may carry, with the uniform K each decoder supports.
++# lut_e4m3 is verified against B12X's K2 table; mcg is exllamav3's multiplier
++# codebook (b12x executes it from K3, see TrellisSource).
++_CODEBOOK_BITS = {"lut_e4m3": (2,), "mcg": (3, 4, 5, 6)}
++_MCG_SEED = 0xCBAC1FED
++
++
+ @lru_cache(maxsize=4)
+ def _manifest(root: str) -> dict:
+     directory = Path(root)
+     manifest = json.loads((directory / "trellis-manifest.json").read_text())
+     required = {
+         "schema": "trellis-dense-checkpoint/1",
+-        "codebook": "lut_e4m3",
+-        "bits_per_quantized_coefficient": 2,
+         "state_bits": 16,
+         "tailbite_context": 128,
+         "tile_shape": [16, 16],
+@@ -39,6 +45,20 @@ def _manifest(root: str) -> dict:
+     for key, value in required.items():
+         if manifest.get(key) != value:
+             raise ValueError(f"independent trellis requires {key}={value!r}")
++    codebook = manifest.get("codebook")
++    if codebook not in _CODEBOOK_BITS:
++        raise ValueError(
++            f"independent trellis codebook must be one of {sorted(_CODEBOOK_BITS)}, got {codebook!r}"
++        )
++    bits = manifest.get("bits_per_quantized_coefficient")
++    if bits not in _CODEBOOK_BITS[codebook]:
++        if codebook == "mcg" and bits == 2:
++            raise ValueError("mcg trellis requires bits_per_quantized_coefficient >= 3")
++        raise ValueError(
++            f"bits_per_quantized_coefficient={bits!r} is not supported for {codebook}"
++        )
++    if codebook == "mcg" and manifest.get("codebook_seed") != _MCG_SEED:
++        raise ValueError(f"mcg trellis requires codebook_seed={_MCG_SEED}")
+     tables_name = manifest["decoder_tables"]
+     if Path(tables_name).name != tables_name:
+         raise ValueError("decoder_tables must name a checkpoint-local file")
+@@ -47,11 +67,12 @@ def _manifest(root: str) -> dict:
+     if digest != manifest["decoder_tables_sha256"]:
+         raise ValueError("independent trellis decoder table hash mismatch")
+     with safe_open(tables_path, framework="pt", device="cpu") as handle:
+-        lut = handle.get_tensor("lut_e4m3_k2")
+-        with torch.device("cpu"):
+-            reference_lut = lut_e4m3_direct_table_cpu()[:65536].cpu()
+-        if not torch.equal(lut, reference_lut):
+-            raise ValueError("checkpoint K2 lookup differs from the B12X decoder")
++        if codebook == "lut_e4m3":
++            lut = handle.get_tensor("lut_e4m3_k2")
++            with torch.device("cpu"):
++                reference_lut = lut_e4m3_direct_table_cpu()[:65536].cpu()
++            if not torch.equal(lut, reference_lut):
++                raise ValueError("checkpoint K2 lookup differs from the B12X decoder")
+         h = torch.ones((1, 1), dtype=torch.float64, device="cpu")
+         while h.shape[0] < 128:
+             h = torch.cat((torch.cat((h, h), 1), torch.cat((h, -h), 1)), 0)
+@@ -89,13 +110,16 @@ def read_independent_layer(
+         raise ValueError("num_experts must be positive")
+     root = Path(root)
+     manifest = _manifest(str(root.resolve()))
++    codebook = manifest["codebook"]
++    bits = manifest["bits_per_quantized_coefficient"]
++    words = 16 * bits
+     local = intermediate_size // tp_size
+     first = tp_rank * local
+     tiles = hidden_size // 16
+     slots = local // 32
+     # One row stores two N16 (FC1) or K16 (FC2) tiles per matrix/expert.
+     codes = torch.empty(
+-        (slots, num_experts, 3, 2, tiles, 32), dtype=torch.int16, device="cpu"
++        (slots, num_experts, 3, 2, tiles, words), dtype=torch.int16, device="cpu"
+     )
+     inputs = torch.empty(
+         (num_experts, 2, hidden_size), dtype=torch.float16, device="cpu"
+@@ -124,7 +148,7 @@ def read_independent_layer(
+                 if entry["packed_file"] != filename:
+                     raise ValueError(f"manifest shard mismatch for {stem}")
+                 view = handle.get_slice(stem + ".trellis")
+-                if view.get_shape() != [shape[1] // 16, shape[0] // 16, 32]:
++                if view.get_shape() != [shape[1] // 16, shape[0] // 16, words]:
+                     raise ValueError(f"native tile shape mismatch for {stem}")
+                 if view.get_dtype() != "I16":
+                     raise TypeError(f"{stem}.trellis must contain int16 tile words")
+@@ -142,19 +166,19 @@ def read_independent_layer(
+                 if matrix < 2:
+                     packed = view[:, first // 16 : (first + local) // 16, :]
+                     codes[:, expert, matrix].copy_(
+-                        packed.reshape(tiles, slots, 2, 32).permute(1, 2, 0, 3)
++                        packed.reshape(tiles, slots, 2, words).permute(1, 2, 0, 3)
+                     )
+                     inputs[expert, matrix].copy_(suh)
+                     middle[expert, matrix].copy_(svh[first : first + local])
+                 else:
+                     packed = view[first // 16 : (first + local) // 16, :, :]
+-                    codes[:, expert, matrix].copy_(packed.reshape(slots, 2, tiles, 32))
++                    codes[:, expert, matrix].copy_(packed.reshape(slots, 2, tiles, words))
+                     middle[expert, matrix].copy_(suh[first : first + local])
+                     outputs[expert].copy_(svh)
+     config = TrellisConfig.from_dict(
+         {
+             "version": 2,
+-            "codebook": "lut_e4m3",
++            "codebook": codebook,
+             "rate": {"granularity": "uniform"},
+             "scale": {
+                 name: {"vectors": "per_expert", "gains": "none"}
+@@ -168,7 +192,7 @@ def read_independent_layer(
+     )
+     source = TrellisSource(
+         config=config,
+-        uniform_bits=2,
++        uniform_bits=bits,
+         extent=TrellisExtent(
+             global_intermediate_size=intermediate_size,
+             first_slot=first // 32,
+@@ -177,7 +201,7 @@ def read_independent_layer(
+     )
+     weights = TrellisWeights(
+         codes=codes.view(torch.uint8).reshape(slots, -1),
+-        rate=torch.tensor(0x22, dtype=torch.uint8, device="cpu"),
++        rate=torch.tensor(17 * bits, dtype=torch.uint8, device="cpu"),
+         input_scales=ScaleFactors(inputs),
+         intermediate_scales=ScaleFactors(middle),
+         output_scales=ScaleFactors(outputs),

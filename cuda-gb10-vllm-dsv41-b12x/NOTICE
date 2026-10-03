@@ -7,16 +7,21 @@ components (see "NVIDIA-proprietary components"). Attribution is a condition of 
 
 Vendored material (cuda-gb10-vllm-dsv41-b12x/patches/)
 ------------------------------------------------------
-None. The directory holds pins only (UPSTREAM_COMMITS.txt, PINNED_DISTS.txt, MD5SUMS.txt). No upstream
-source file is overlaid: the vLLM fork pads DeepSeek-V4.1 attention for tensor-parallel 3 by itself.
+No vendored files. Besides the pins (UPSTREAM_COMMITS.txt, PINNED_DISTS.txt, MD5SUMS.txt), patches/b12x and
+patches/vllm hold source patches applied to the pinned checkouts before they are installed, each recorded with its
+origin, author and sha256 in that directory's APPLIED.md:
+  b12x/0001  local-inference-lab/b12x#457 (switchless-ring RoCE routing), Apache-2.0 as b12x
+  b12x/0002  Defilan/b12x f0997577 (trellis-dense-checkpoint/1 accepts mcg K3..K6), Apache-2.0 as b12x
+  vllm/0001  Defilan/vllm 9036f769 (DS4.1 trellis config accepts mcg K3..K6), Apache-2.0 as vLLM
 
 Built from source at a pinned commit
 ------------------------------------
 local-inference-lab/vllm   Apache-2.0   https://github.com/local-inference-lab/vllm   commit ec49d5781a0ebf7960c7711ac3e0f42376b1a127
                                         A fork of vllm-project/vllm (Apache-2.0). License reproduced in LICENSE.vllm-Apache-2.0.
                                         The pinned checkout is kept in the image at /src/vllm.
-local-inference-lab/b12x   Apache-2.0   https://github.com/local-inference-lab/b12x   commit 0d6600e64955114cad44cdee94c764a8001221e2
-                                        (b12x 1.3.0, Luke Alonso). License reproduced in LICENSE.b12x-Apache-2.0.
+local-inference-lab/b12x   Apache-2.0   https://github.com/local-inference-lab/b12x   commit 6380e581f075df7f01a72d4b67f016225f260c86
+                                        (b12x 1.3.0, Luke Alonso; head of upstream's evidence/ds41-x4t-serving-20260929
+                                        branch). License reproduced in LICENSE.b12x-Apache-2.0.
                                         The pinned checkout is kept in the image at /src/b12x.
 
 Compiled into the vLLM fork's extensions (fetched by its CMake build at the revisions the fork pins)

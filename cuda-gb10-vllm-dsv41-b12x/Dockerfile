@@ -5,8 +5,10 @@
 # the b12x kernel library (CuTe-DSL, JIT), tensor-parallel 3 across three Sparks cabled in a ring.
 #
 # Unlike the EXL3 sibling (stock vLLM plus a small overlay), the fork is BUILT FROM SOURCE at a pinned commit and
-# replaces the base's vLLM outright. No source patches: the fork pads V4.1's 64 heads / 8 output groups to 72 / 9 for
-# TP3 by itself (vllm/model_executor/models/config.py, DeepseekV41ForCausalLMConfig.update_model_config_for_parallelism).
+# replaces the base's vLLM outright. The fork pads V4.1's 64 heads / 8 output groups to 72 / 9 for TP3 by itself
+# (vllm/model_executor/models/config.py, DeepseekV41ForCausalLMConfig.update_model_config_for_parallelism). The source
+# patches carried on the pins (patches/<name>/APPLIED.md) are not yet upstream: b12x's switchless-ring RoCE routing, and
+# a matching pair (one for the fork, one for b12x) that loads exllamav3 mcg K3..K6 trellis checkpoints.
 # What is built or vendored here is Apache-2.0, BSD-3-Clause or MIT, and nothing is AGPL (build/deps_gate.py scans
 # every installed distribution). The image ALSO carries NVIDIA-proprietary components under NVIDIA's licenses: the
 # CUDA runtime and toolkit pieces from the base, and nvidia-cutlass-dsl 4.7.1 (+ libs), which the fork and b12x
@@ -14,16 +16,20 @@
 #
 #   base        vllm/vllm-openai deepseekv41-flash-0909-arm64, by digest   Apache-2.0   torch 2.13.0+cu130, CUDA 13.0
 #   vLLM fork   local-inference-lab/vllm ec49d578                          Apache-2.0   compiled here for sm_121a
-#   b12x        local-inference-lab/b12x 0d6600e6 (1.3.0)                  Apache-2.0   pure Python, kernels JIT at serve
+#               + Defilan/vllm 9036f769 (DS4.1 config accepts mcg K3..K6 trellis manifests), carried
+#   b12x        local-inference-lab/b12x 6380e581 (1.3.0)                  Apache-2.0   pure Python, kernels JIT at serve
+#               (head of upstream's evidence/ds41-x4t-serving-20260929, the only ref with the trellis-dense reader)
 #               + local-inference-lab/b12x#457 (switchless-ring RoCE routing), carried until it merges
+#               + Defilan/b12x f0997577 (trellis-dense-checkpoint/1 accepts mcg K3..K6), carried
 #   FlashInfer  0.6.18.post1 wheels by sha256 (the fork's pin)             Apache-2.0   replaces the base's 0.6.18
 #
 # Two ways to get the fork's vLLM wheel, one gate for both (build/pins_gate.py):
 #   default     compile /src/vllm with the fork's own recipe (setup.py bdist_wheel after use_existing_torch.py)
 #   fallback    VLLM_WHEEL_URL + VLLM_WHEEL_SHA256: a wheel this same stage produced on a Spark from the same commit,
 #               hash-verified. Used only if the compile does not fit the hosted runner (see README).
-# Either way the final stage's /src/vllm is a pristine checkout of the pinned commit and every tracked vllm/**/*.py
-# must be byte-identical in the installed package, so a wheel from any other commit fails the build.
+# Either way the final stage's /src/vllm is a checkout of the pinned commit plus exactly the carried patches in
+# patches/vllm (the compile applies the same patches first), and every tracked vllm/**/*.py must be byte-identical in
+# the installed package, so a wheel from any other commit, or without the patches, fails the build.
 #
 # Stages: src (checkouts) -> vllm-build (the wheel) -> vllm-wheel (export only: `--target vllm-wheel` with a local
 # output yields the wheel plus its sha256, which is how the fallback wheel is made) -> the image (last, the default).
@@ -32,7 +38,7 @@
 
 ARG BASE=vllm/vllm-openai@sha256:d84a123255b822fc22508635218000187221794f59c0694c33b0650d1e377d58
 ARG VLLM_FORK_COMMIT=ec49d5781a0ebf7960c7711ac3e0f42376b1a127
-ARG B12X_COMMIT=0d6600e64955114cad44cdee94c764a8001221e2
+ARG B12X_COMMIT=6380e581f075df7f01a72d4b67f016225f260c86
 
 # ---- 1 sources at their pinned commits (the base has no git; setuptools-scm and the pins gate need one) ----
 FROM ${BASE} AS src
@@ -67,6 +73,11 @@ ARG MAX_JOBS=2
 ARG NVCC_THREADS=1
 ARG VLLM_WHEEL_URL=""
 ARG VLLM_WHEEL_SHA256=""
+# The carried vLLM patches go into the compiled tree, so the wheel is the pin plus exactly those patches (they touch
+# Python only; the compiled extensions are unchanged). The image stage applies them again to its own /src/vllm.
+COPY patches/vllm /opt/llmkube/patches/vllm
+COPY build/apply_carried_patches.sh /opt/llmkube/build/apply_carried_patches.sh
+RUN bash /opt/llmkube/build/apply_carried_patches.sh /opt/llmkube/patches/vllm /src/vllm
 RUN <<'EOT'
 set -eu
 mkdir -p /tmp/dist
@@ -183,24 +194,22 @@ cp /tmp/dist/vllm-install.txt /opt/llmkube/vllm-install.txt
 rm -rf /root/.cache/pip
 EOT
 
-# ---- 3.3a open upstream b12x PRs carried on the pin (patches/b12x/APPLIED.md), applied before b12x is installed ----
-# A patch's new files are then recorded with `git add -N` (intent to add), so the clean after install keeps them and
-# the pins gate sees them as part of the checkout; the gate proves the checkout is the pin plus exactly these patches.
-# Not `git apply --intent-to-add`: git 2.43 (this base) drops every other index entry when it is used without --index.
-RUN <<'EOT'
-set -eu
-for p in /opt/llmkube/patches/b12x/*.patch; do
-  git -C /src/b12x apply --check "$p"
-  git -C /src/b12x apply "$p"
-  git -C /src/b12x apply --summary "$p" | awk '/ create mode /{print $NF}' | while read -r f; do
-    git -C /src/b12x add -N -- "$f"
-  done
-  echo "applied $(basename "$p")"
-done
-EOT
+# ---- 3.3a patches carried on the pins (patches/<name>/APPLIED.md): the fork's onto this stage's /src/vllm (the wheel
+# above was compiled from the same patched tree), b12x's before b12x is installed ----
+# build/apply_carried_patches.sh records a patch's new files with `git add -N` (intent to add), so the clean after
+# install keeps them and the pins gate sees them as part of the checkout; the gate proves each checkout is the pin plus
+# exactly these patches. Not `git apply --intent-to-add`: git 2.43 (this base) drops every other index entry when it
+# is used without --index.
+RUN bash /opt/llmkube/build/apply_carried_patches.sh /opt/llmkube/patches/vllm /src/vllm \
+ && bash /opt/llmkube/build/apply_carried_patches.sh /opt/llmkube/patches/b12x /src/b12x
 
-# ---- 3.3 b12x at its pinned commit, with its dependency pins (cutlass-dsl 4.7.1 and libs, apache-tvm-ffi <0.2) ----
-RUN pip install -q -c /opt/llmkube/constraints.txt /src/b12x && git -C /src/b12x clean -fdxq && rm -rf /root/.cache/pip
+# ---- 3.3 b12x at its pinned commit plus the carried patches ----
+# --no-deps: the 6380e581 pin still declares nvidia-cutlass-dsl (+ libs) ==4.6.2, while the fork requires 4.7.1 and
+# upstream b12x moved to 4.7.1 with no source change (4bacd509). The fork's install above already brought 4.7.1 and
+# b12x's other requirements (apache-tvm-ffi, transformers, safetensors...); the pins gate holds cutlass-dsl at 4.7.1,
+# and the deps gate fails on any b12x requirement that is missing, accepting only the five cutlass-dsl ==4.6.2 lines
+# (patches/PIP_CHECK_ALLOW.txt).
+RUN pip install -q --no-deps /src/b12x && git -C /src/b12x clean -fdxq && rm -rf /root/.cache/pip
 
 # ---- 3.3b NCCL 2.30.7 back in place of torch's 2.29.7 pin ----
 # The base ships NCCL 2.30.7 even though torch 2.13.0+cu130 declares ==2.29.7; installing the fork's wheel lets pip

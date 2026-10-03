@@ -1,3 +1,3 @@
 # name repo commit (build/pins_gate.py checks /src/<name> against these and the installed package against /src/<name>)
 vllm local-inference-lab/vllm ec49d5781a0ebf7960c7711ac3e0f42376b1a127
-b12x local-inference-lab/b12x 0d6600e64955114cad44cdee94c764a8001221e2
+b12x local-inference-lab/b12x 6380e581f075df7f01a72d4b67f016225f260c86
