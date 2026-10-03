@@ -14,7 +14,7 @@ Gufo
 
     Gufo
     https://github.com/gufo-org/gufo
-    tag v0.3.0, commit fd1710b5fd090880722e0681a868df2006595c73
+    tag v0.5.0, commit 23cacbb9379d5a8e8531535270891729ca6c00dd
     Copyright (c) 2026 gufo contributors
     MIT License, reproduced in LICENSE.gufo-MIT
 
@@ -50,7 +50,8 @@ versions that file lists:
                               third-party/ directory.
     ICU, libcurl, OpenSSL,    Ubuntu 24.04 (noble) archive packages. Each
     libpng, libjpeg-turbo,    package's copyright file is kept under
-    GNU C/C++/OpenMP runtime  /usr/share/doc/<package>/copyright.
+    libwebp, GNU C/C++/       /usr/share/doc/<package>/copyright.
+    OpenMP runtime
 
 /opt/llmkube/linked-libs.txt lists every library the binary links with its
 owning package, and /opt/llmkube/runtime-packages.txt every installed package

@@ -52,12 +52,16 @@
 # LICENSE.gufo-MIT and THIRD_PARTY_NOTICES.md are byte-for-byte copies of the
 # files at the pinned commit; the build fails if they drift.
 
-# Gufo, pinned by release tag AND the exact commit it must resolve to. v0.3.0 is
-# a lightweight tag on fd1710b5 ("chore(main): release 0.3.0", 2026-09-30),
-# verified with `gh api repos/gufo-org/gufo/commits/fd1710b5`.
+# Gufo, pinned by release tag AND the exact commit it must resolve to. v0.5.0 is
+# a lightweight tag on 23cacbb9 ("chore(main): release 0.5.0", 2026-10-02),
+# verified with `gh api repos/gufo-org/gufo/git/ref/tags/v0.5.0`. It is the
+# first release with the thinking-on prompt-cache fix (gufo-org/gufo#335, fixed
+# by #362, #358, #369 and #348). That fix was validated on Strix Halo at
+# 93af45d4, which differs from the release commit only by a functional-test
+# change (#378) and the release bump; no server code changed between them.
 ARG GUFO_REPO=https://github.com/gufo-org/gufo.git
-ARG GUFO_REF=v0.3.0
-ARG GUFO_SHA=fd1710b5fd090880722e0681a868df2006595c73
+ARG GUFO_REF=v0.5.0
+ARG GUFO_SHA=23cacbb9379d5a8e8531535270891729ca6c00dd
 # AMD's ROCm dev image, the plain (not -complete) 7.2.3 tag, pinned by digest.
 # Single-arch amd64 manifest (application/vnd.docker.distribution.manifest.v2+json)
 # read from registry-1.docker.io on 2026-09-30. It carries rocm-dev (HIP clang,
@@ -81,13 +85,14 @@ ARG GUFO_SHA
 ARG GPU_TARGETS
 ARG MAX_JOBS
 # Gufo README "Without Nix": build-essential cmake ninja-build pkg-config
-# libicu-dev libcurl4-openssl-dev libssl-dev libpng-dev libjpeg-dev ffmpeg, then
-# hipblas-dev hipblaslt-dev rocblas-dev hipcub-dev rocprim-dev rocwmma-dev.
-# Everything except `ffmpeg` (see header). build-essential is already in the
-# base; git is for the pinned clone.
+# libicu-dev libcurl4-openssl-dev libssl-dev libpng-dev libjpeg-dev libwebp-dev
+# ffmpeg, then hipblas-dev hipblaslt-dev rocblas-dev hipcub-dev rocprim-dev
+# rocwmma-dev. Everything except `ffmpeg` (see header). build-essential is
+# already in the base; git is for the pinned clone. libwebp-dev is new since
+# v0.3.0: CMakeLists.txt requires it via pkg_check_modules(WEBP REQUIRED).
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       git ca-certificates cmake ninja-build pkg-config \
-      libicu-dev libcurl4-openssl-dev libssl-dev libpng-dev libjpeg-dev \
+      libicu-dev libcurl4-openssl-dev libssl-dev libpng-dev libjpeg-dev libwebp-dev \
       hipblas-dev hipblaslt-dev rocblas-dev hipcub-dev rocprim-dev rocwmma-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
@@ -169,8 +174,8 @@ LABEL org.opencontainers.image.title="llmkube-gufo-rocm-gfx1151" \
       io.llmkube.gufo.sha="${GUFO_SHA}" \
       io.llmkube.rocm.version="${ROCM_VERSION}"
 # Runtime libraries only, matching Gufo's link line (CMakeLists.txt:
-# ICU uc/i18n, libcurl, OpenSSL Crypto, libpng, libjpeg, OpenMP, hip::host,
-# roc::hipblas, roc::hipblaslt, roc::rocblas). ROCm comes from AMD's apt repo at
+# ICU uc/i18n, libcurl, OpenSSL Crypto, libpng, libjpeg, libwebp, OpenMP,
+# hip::host, roc::hipblas, roc::hipblaslt, roc::rocblas). ROCm comes from AMD's apt repo at
 # the same ROCM_VERSION as the builder. curl stays for the HEALTHCHECK; gnupg is
 # only for the repo key and is purged. No ffmpeg.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -182,7 +187,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
        > /etc/apt/sources.list.d/rocm.list \
     && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       hip-runtime-amd hipblas hipblaslt rocblas \
-      libicu74 libcurl4t64 libssl3t64 libpng16-16t64 libjpeg-turbo8 libgomp1 \
+      libicu74 libcurl4t64 libssl3t64 libpng16-16t64 libjpeg-turbo8 libwebp7 libgomp1 \
     && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 # The installed tree: /usr/local/bin/gufo (+ the gufo-server symlink),

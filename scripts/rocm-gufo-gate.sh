@@ -63,7 +63,7 @@ if ! run sh -c '
       ldd /usr/local/bin/gufo > /tmp/ldd.txt 2>&1
       test -s /tmp/ldd.txt || { echo "FAIL: ldd produced no output"; exit 1; }
       if grep -q "not found" /tmp/ldd.txt; then echo "FAIL: unresolved libraries:"; grep "not found" /tmp/ldd.txt; exit 1; fi
-      for lib in libamdhip64 libhipblas libhipblaslt librocblas libicuuc libcurl libcrypto libpng libjpeg; do
+      for lib in libamdhip64 libhipblas libhipblaslt librocblas libicuuc libcurl libcrypto libpng libjpeg libwebp; do
         grep -q "${lib}" /tmp/ldd.txt || { echo "FAIL: gufo does not link ${lib}; the build is not the HIP release build"; exit 1; }
       done
     '; then
