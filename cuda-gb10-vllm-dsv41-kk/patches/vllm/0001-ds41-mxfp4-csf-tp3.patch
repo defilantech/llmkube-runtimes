@@ -1,0 +1,17 @@
+diff --git a/vllm/model_executor/model_loader/mxfp4_csf_loader.py b/vllm/model_executor/model_loader/mxfp4_csf_loader.py
+index e060dbec4..4f317d2e1 100644
+--- a/vllm/model_executor/model_loader/mxfp4_csf_loader.py
++++ b/vllm/model_executor/model_loader/mxfp4_csf_loader.py
+@@ -61,7 +61,11 @@ def read_mxfp4_csf_layer(
+     family = contract["family"]
+     if (num_experts, hidden_size, intermediate_size) != FAMILIES[family]:
+         raise ValueError("MXFP4-CSF expert geometry differs from the checkpoint family")
+-    supported_tp = (1, 2, 4, 8) if family == "deepseek_v41" else (1, 2, 4, 8, 12, 16)
++    # DS4.1 TP3 (three DGX Sparks): 2304 / 3 = 768 local channels, which is
++    # 32-aligned (tp_extent) and whole 16-row scale slabs, like TP2/TP4.
++    supported_tp = (
++        (1, 2, 3, 4, 8) if family == "deepseek_v41" else (1, 2, 4, 8, 12, 16)
++    )
+     if tp_size not in supported_tp or not 0 <= tp_rank < tp_size:
+         raise ValueError(
+             f"MXFP4-CSF {family} supports TP {supported_tp} with a valid rank"

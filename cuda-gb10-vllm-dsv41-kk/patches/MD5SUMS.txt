@@ -1,0 +1,2 @@
+# md5-prefix file, for files vendored into patches/ from upstream. None today: the fork pads V4.1 attention heads for
+# TP3 itself, so nothing is overlaid. build/pins_gate.py accepts an empty list.

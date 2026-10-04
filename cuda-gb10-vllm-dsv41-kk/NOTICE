@@ -1,0 +1,97 @@
+NOTICE for llmkube-vllm-cuda-gb10-dsv41-kk
+===========================================
+
+The llmkube-runtimes material in this image (build scripts, tests, entrypoint) is Apache-2.0, the repository
+license. The image also incorporates third-party material under the licenses below, including NVIDIA-proprietary
+components (see "NVIDIA-proprietary components"). Attribution is a condition of those licenses.
+
+Vendored material (cuda-gb10-vllm-dsv41-kk/patches/)
+----------------------------------------------------
+No vendored files. Besides the pins (UPSTREAM_COMMITS.txt, PINNED_DISTS.txt, MD5SUMS.txt), patches/b12x,
+patches/vllm and patches/nccl hold source patches applied to the pinned checkouts before they are built or
+installed, each recorded with its origin, author and sha256 in that directory's APPLIED.md:
+  b12x/0001  local-inference-lab/b12x#457 (switchless-ring RoCE routing), Apache-2.0 as b12x
+  vllm/0001  DS4.1 MXFP4-CSF reader accepts TP3 (authored in this repository), Apache-2.0 as vLLM
+  nccl/0001  NVIDIA/nccl#2393 (AArch64 IB send-path acquire fence, Stanislav Bardyuk), Apache-2.0 as NCCL
+
+Built from source at a pinned commit
+------------------------------------
+local-inference-lab/vllm   Apache-2.0   https://github.com/local-inference-lab/vllm   commit 1286ae9c9a3fd9376b82da39f7bc87f6a99037d9
+                                        (integration/karmic-kraken-beta). A fork of vllm-project/vllm (Apache-2.0).
+                                        License reproduced in LICENSE.vllm-Apache-2.0.
+                                        The pinned checkout is kept in the image at /src/vllm.
+local-inference-lab/b12x   Apache-2.0   https://github.com/local-inference-lab/b12x   commit 78ee52c302abcef019d7ce17634c80b76f0975c9
+                                        (b12x 1.3.0, Luke Alonso; integration/karmic-kraken-beta).
+                                        License reproduced in LICENSE.b12x-Apache-2.0.
+                                        The pinned checkout is kept in the image at /src/b12x.
+NVIDIA/nccl                Apache-2.0 + BSD-3-Clause   https://github.com/NVIDIA/nccl   commit 73cf112295c33aee2b895f329f592f2a9b4b0f97
+                                        (tag v2.30.7-1). Compiled here into libnccl.so.2, which replaces the library in
+                                        the nvidia-nccl-cu13 2.30.7 wheel. Most of NCCL is Apache-2.0; parts keep their
+                                        original BSD license. LICENSE.txt at that commit is reproduced in LICENSE.nccl.
+                                        The library links NVIDIA's static CUDA runtime (libcudart_static.a, CUDA EULA),
+                                        as NVIDIA's own wheel does. The pinned checkout is kept at /src/nccl.
+
+Compiled into the vLLM fork's extensions (fetched by its CMake build at the revisions the fork pins)
+---------------------------------------------------------------------------------------------------
+Each text is reproduced from the upstream repository's license file at exactly that revision, and ships in the image
+at /opt/llmkube/licenses/.
+
+These revisions are unchanged from the cuda-gb10-vllm-dsv41-b12x sibling: the fork's CMakeLists.txt, cmake/ and
+setup.py are identical at 1286ae9c and ec49d578.
+
+NVIDIA/cutlass                 BSD-3-Clause   tag v4.7.1 (CMakeLists.txt CUTLASS_REVISION)
+    https://github.com/NVIDIA/cutlass/blob/v4.7.1/LICENSE.txt -> LICENSE.cutlass-BSD-3-Clause
+vllm-project/flash-attention   BSD-3-Clause   commit 506341a143fcabd4bb79052a7605ada727d6b3f5
+    https://github.com/vllm-project/flash-attention/blob/506341a143fcabd4bb79052a7605ada727d6b3f5/LICENSE -> licenses/LICENSE.flash-attention-BSD-3-Clause
+vllm-project/tml-fa4           BSD-3-Clause   commit 75765e76a9c2c012c1f6ecd64577eb646eb4d303
+    https://github.com/vllm-project/tml-fa4/blob/75765e76a9c2c012c1f6ecd64577eb646eb4d303/LICENSE -> licenses/LICENSE.tml-fa4-BSD-3-Clause
+vllm-project/FlashMLA          MIT            commit 0eee43b12f034b657133cf2afca6a72ebb6efccf
+    https://github.com/vllm-project/FlashMLA/blob/0eee43b12f034b657133cf2afca6a72ebb6efccf/LICENSE -> licenses/LICENSE.FlashMLA-MIT
+vllm-project/DeepGEMM          MIT            commit ad1f1726aa540a76c1d26d6a120effb8de21eaa4
+    https://github.com/vllm-project/DeepGEMM/blob/ad1f1726aa540a76c1d26d6a120effb8de21eaa4/LICENSE -> licenses/LICENSE.DeepGEMM-MIT
+triton-lang/triton             MIT            tag v3.5.1, commit 0add68262ab0a2e33b84524346cb27cbb2787356 (triton_kernels)
+    https://github.com/triton-lang/triton/blob/0add68262ab0a2e33b84524346cb27cbb2787356/LICENSE -> licenses/LICENSE.triton-MIT
+vllm-project/FlashKDA          MIT            commit b59532f1f464fbd536272780e30df5bf6a2ccc02
+    https://github.com/vllm-project/FlashKDA/blob/b59532f1f464fbd536272780e30df5bf6a2ccc02/LICENSE -> licenses/LICENSE.FlashKDA-MIT
+vllm-project/DeepSelect        MIT            commit d96d33afe1fab0d6066da49cdc91e64c2bee65ea
+    https://github.com/vllm-project/DeepSelect/blob/d96d33afe1fab0d6066da49cdc91e64c2bee65ea/LICENSE -> licenses/LICENSE.DeepSelect-MIT
+vllm-project/MSA               MIT            commit f355c37eb4e1413f21ee2ad8bbad25079e6bef9d
+    https://github.com/vllm-project/MSA/blob/f355c37eb4e1413f21ee2ad8bbad25079e6bef9d/LICENSE -> licenses/LICENSE.MSA-MIT
+IST-DASLab/qutlass             Apache-2.0     commit e74319e3405ce6d71965732880f5dc1f52371f64
+    https://github.com/IST-DASLab/qutlass/blob/e74319e3405ce6d71965732880f5dc1f52371f64/LICENSE -> licenses/LICENSE.qutlass-Apache-2.0
+These are the same components upstream vLLM wheels carry; which of them produce code for sm_121a is decided by
+the fork's CMake architecture gates.
+
+Prebuilt wheels installed by sha256 (patches/PINNED_DISTS.txt)
+--------------------------------------------------------------
+FlashInfer 0.6.18.post1   Apache-2.0   flashinfer-python, flashinfer-cubin, flashinfer-jit-cache (cu130, aarch64),
+                                       https://github.com/flashinfer-ai/flashinfer tag v0.6.18.post1. License, with its
+                                       own third-party summary (cutlass BSD-3-Clause, spdlog MIT), reproduced in
+                                       LICENSE.flashinfer-Apache-2.0.
+
+Runtime dependencies resolved from PyPI
+---------------------------------------
+The fork's requirements/cuda.txt and b12x's pyproject.toml are installed as declared; /opt/llmkube/pip-freeze.txt
+records the exact set. build/deps_gate.py fails the build if any installed distribution declares an AGPL license.
+
+NVIDIA-proprietary components
+-----------------------------
+This image is not all Apache-2.0/BSD/MIT. It includes, under NVIDIA's own license terms and not under Apache-2.0:
+  nvidia-cutlass-dsl 4.7.1 and nvidia-cutlass-dsl-libs-{base,core,cu12,cu13} 4.7.1 (PyPI classifier
+      "Other/Proprietary License"; https://docs.nvidia.com/cutlass/latest/media/docs/pythonDSL/license.html),
+      required by both the vLLM fork (nvidia-cutlass-dsl[cu13]==4.7.1) and b12x (==4.7.1); the pinned base already
+      ships nvidia-cutlass-dsl 4.6.2. It is a vendor runtime, like CUDA: nothing in this image modifies or compiles
+      it, and b12x's and FlashInfer's CuTe-DSL kernels are generated by it at serve time on the GPU;
+  the static CUDA runtime linked into the source-built libnccl.so.2 (NVIDIA CUDA EULA, redistributable);
+  the CUDA runtime and toolkit components of the base image (NVIDIA CUDA EULA) and the nvidia-* CUDA library
+      wheels torch depends on.
+These are redistributed as the upstream vllm/vllm-openai base redistributes them. The OCI licenses label reads
+"Apache-2.0 AND BSD-3-Clause AND MIT AND LicenseRef-NVIDIA-Proprietary".
+
+Base image
+----------
+vLLM   Apache-2.0   vllm/vllm-openai:deepseekv41-flash-0909-arm64, pinned by digest in the Dockerfile. Its vLLM
+                    package is uninstalled and replaced by the fork.
+
+Model artifacts are NOT in this image. deepseek-ai/DeepSeek-V4.1-Flash is MIT, and so is its lossless scale-compressed
+repackaging local-inference-lab/DeepSeek-V4.1-Flash-MXFP4-CSF; either is staged by the InferenceService.

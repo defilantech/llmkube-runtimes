@@ -1,0 +1,5 @@
+# name repo commit (build/pins_gate.py checks /src/<name> against these and the installed package against /src/<name>;
+# nccl is native: its installed libnccl.so.2 is checked against the build record /opt/llmkube/nccl-build.txt)
+vllm local-inference-lab/vllm 1286ae9c9a3fd9376b82da39f7bc87f6a99037d9
+b12x local-inference-lab/b12x 78ee52c302abcef019d7ce17634c80b76f0975c9
+nccl NVIDIA/nccl 73cf112295c33aee2b895f329f592f2a9b4b0f97
