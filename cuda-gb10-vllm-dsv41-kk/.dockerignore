@@ -1,0 +1,5 @@
+# Host-side caches never belong in the image (the in-image AGPL scan reads tests/, and host .pyc files
+# would also make the build context machine-dependent).
+**/__pycache__
+**/*.pyc
+.pytest_cache

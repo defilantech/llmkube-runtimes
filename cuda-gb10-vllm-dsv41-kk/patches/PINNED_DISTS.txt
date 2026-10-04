@@ -1,0 +1,15 @@
+# dist version [sha256 url]
+# Rows with a sha256 and url are downloaded, hash-checked and installed --no-deps by the Dockerfile. The rest are
+# version assertions on what the base or the fork's own requirements resolved. build/pins_gate.py checks all of them.
+torch 2.13.0+cu130
+flashinfer-python 0.6.18.post1 adb6d2952b47131138e108bd2999b1fe18b71f1a4c0b2684f168753db9563991 https://files.pythonhosted.org/packages/64/3f/bd0a74bfbb4f3813bfe61267ff696fb229ab70c0f1f44848287221928c95/flashinfer_python-0.6.18.post1-py3-none-any.whl
+flashinfer-cubin 0.6.18.post1 bbacb5b8bbf429e43bf2740bb45551d981f41d0462842e36ee6fb3e3452763ab https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.18.post1/flashinfer_cubin-0.6.18.post1-py3-none-any.whl
+flashinfer-jit-cache 0.6.18.post1+cu130 860ec5ce11a1d686bde04dbef4bedee15c39e3ec5e10adccb186dfee2e4113f2 https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.18.post1/flashinfer_jit_cache-0.6.18.post1+cu130-cp39-abi3-manylinux_2_28_aarch64.whl
+nvidia-cutlass-dsl 4.7.1
+nvidia-cutlass-dsl-libs-base 4.7.1
+nvidia-cutlass-dsl-libs-core 4.7.1
+nvidia-cutlass-dsl-libs-cu12 4.7.1
+nvidia-cutlass-dsl-libs-cu13 4.7.1
+apache-tvm-ffi 0.1.11
+b12x 1.3.0
+nvidia-nccl-cu13 2.30.7
