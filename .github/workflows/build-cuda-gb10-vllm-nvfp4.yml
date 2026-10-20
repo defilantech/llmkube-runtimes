@@ -16,7 +16,7 @@ on:
       - 'scripts/dockerfile-parse-check.py'
       - '.github/workflows/build-cuda-gb10-vllm-nvfp4.yml'
   workflow_dispatch: {}
-  # NO schedule, for a different reason than the qwen4exp variant next door.
+  # NO schedule, for a different reason than the compiled llama.cpp images.
   #
   # The sibling llama.cpp images run a weekly canary because they COMPILE: their
   # pinned ref plus a moving CUDA base can drift into a build that no longer
