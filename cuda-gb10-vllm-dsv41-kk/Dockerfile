@@ -11,7 +11,8 @@
 # are applied on top and drift-gated. New here: NCCL 2.30.7 is rebuilt from its release tag with the AArch64 IB
 # send-path fence (NVIDIA/nccl#2393), and the fork's MXFP4-CSF reader admits TP3 for DS4.1.
 # The spark-ds41f patches are verbatim upstream files (Apache-2.0, LICENSE.spark-ds41f-Apache-2.0) applied after this
-# repository's own carried patches, in the order of patches/<name>/spark-ds41f/series (build/apply_carried_patches.sh).
+# repository's own carried patches, in the order of patches/<name>/spark-ds41f/series (build/apply_carried_patches.sh);
+# patches/vllm/stacked/ (ours, Engram prefetch) builds on that series and applies after it.
 # What is built or vendored here is Apache-2.0, BSD-3-Clause or MIT, and nothing is AGPL (build/deps_gate.py scans
 # every installed distribution). The image ALSO carries NVIDIA-proprietary components under NVIDIA's licenses: the
 # CUDA runtime and toolkit pieces from the base, and nvidia-cutlass-dsl 4.7.1 (+ libs), which the fork and b12x
@@ -22,6 +23,7 @@
 #               karmic-kraken-beta, tag vllm-jovian-cu134-beta-1286ae9c...)
 #               + DS4.1 MXFP4-CSF reader accepts TP3, and three memory patches, carried
 #               + 21 christopherowen/spark-ds41f patches (Lane A series), carried
+#               + Engram next-chunk prefetch on top of that series (ours, default off), carried
 #   b12x        local-inference-lab/b12x 78ee52c3 (1.3.0, karmic-kraken-    Apache-2.0   pure Python, kernels JIT at serve
 #               beta, tag b12x-cu134-beta-78ee52c3...)
 #               + local-inference-lab/b12x#457 (switchless-ring RoCE routing), carried until it merges

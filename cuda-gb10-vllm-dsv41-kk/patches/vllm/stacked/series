@@ -1,0 +1,5 @@
+# This repository's own vLLM patches that build on the spark-ds41f series, applied in exactly this order by
+# build/apply_carried_patches.sh after patches/vllm/*.patch and then spark-ds41f/ (series directories apply in
+# directory-name order, and "stacked" sorts after "spark-ds41f"). They live here, not in patches/vllm/, because they
+# change code a series patch adds and so cannot apply before it. One file name per line; '#' starts a comment.
+0001-engram-prefetch-next-chunk.patch

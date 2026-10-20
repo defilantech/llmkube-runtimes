@@ -691,6 +691,33 @@ def test_committed_series_is_listed_recorded_and_marked(name):
         assert marker in added, f"{n}: marker {marker!r} is not in a line the patch adds"
 
 
+# ---- our own patches stacked on the series, as committed ----
+
+# patches/vllm/stacked/: this repository's patches that change code a spark-ds41f patch adds, so they apply after that
+# series. Series directories apply in directory-name order, so the name has to sort after spark-ds41f.
+STACKED = "stacked"
+
+
+def test_committed_stacked_series_is_ours_listed_recorded_scoped_and_marked():
+    pdir = IMAGE_DIR / "patches" / "vllm"
+    assert sorted(d.name for d in pdir.iterdir() if (d / "series").is_file()) == ["spark-ds41f", STACKED]
+    sdir = pdir / STACKED
+    listed = _series_file(sdir)
+    assert listed and sorted(listed) == sorted(p.name for p in sdir.glob("*.patch")), listed
+    rows = _applied_table(sdir)
+    assert sorted(rows) == sorted(listed), "every stacked patch has exactly one APPLIED.md row and vice versa"
+    for n in listed:
+        p = sdir / n
+        _, upstream, head, author, _, _, marker, sha = rows[n]
+        assert head == "none" and "carried here" in upstream and author == "Defilan", n
+        assert hashlib.sha256(p.read_bytes()).hexdigest() == sha, n
+        text = p.read_text()
+        files = re.findall(r"^diff --git a/(\S+) b/\S+$", text, re.M)
+        assert files and all(f.startswith("vllm/") for f in files), (n, files)
+        added = "".join(l[1:] for l in text.splitlines(True) if l.startswith("+") and not l.startswith("+++"))
+        assert marker in added, f"{n}: marker {marker!r} is not in a line the patch adds"
+
+
 def test_md5sums_list_exactly_the_vendored_series_files():
     rows = [l.split() for l in (IMAGE_DIR / "patches" / "MD5SUMS.txt").read_text().splitlines()
             if l.strip() and not l.startswith("#")]

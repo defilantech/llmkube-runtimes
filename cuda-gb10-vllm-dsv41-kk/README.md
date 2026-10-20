@@ -44,6 +44,8 @@ drifts away" as a generation gets longer), the CSF loader (vllm-956-*), and the 
 - **nccl/0001**, NVIDIA/nccl#2393 (AArch64 IB send-path fence). See "NCCL" below.
 - **vllm/spark-ds41f/** (21) and **b12x/spark-ds41f/** (3): the DSv4.1 Lane A series from
   `christopherowen/spark-ds41f` at `a2a3abae7b`, applied after the patches above. See "Carried from spark-ds41f".
+- **vllm/stacked/0001**, Engram next-chunk prefetch (authored here, not proposed upstream): our own patch on top of
+  spark-ds41f 0002, applied after that series. See "Engram prefetch".
 
 ## Carried from spark-ds41f
 
@@ -87,6 +89,7 @@ lab READMEs (llmkube-internal `plans/dsv41-3spark/manifests/lane-a-b1/README.md`
 | vLLM 0014-0017 | b3 | sequence-parallel (SP) prefill: state, row-wise dataflow, CED encoder, local attention front | always on at TP > 1 (see 0018) |
 | vLLM 0018 | b3 | SP whenever a prompt-processing forward's padded hidden message exceeds the one-shot all-reduce limit (205 tokens at TP3); removes the earlier `SPARK3_DS41_PREFILL_SP_MIN_ROWS` switch | always on at TP > 1, no switch |
 | vLLM 0025 | b3 | splits the indexer's rows across ranks under SP | always on at TP > 1 |
+| vLLM stacked/0001 (ours) | after b3 | Engram next-chunk prefetch (see "Engram prefetch") | off: `SPARK3_ENGRAM_PREFETCH=1`, needs `SPARK3_ENGRAM_ASYNC=1` |
 
 So with no switch set, this image behaves like the Lane A b1 lab image plus the b2 fixes marked "always on" and SP
 prefill. SP prefill has no off switch: it turns itself off only at tensor parallel size 1, with pipeline parallelism,
@@ -95,6 +98,30 @@ the DSpark set) is off until an InferenceService sets its switch.
 
 Left out of the lab layers and so not carried: vLLM 0027 (explicit RoCE collective policy) and b12x 0010, which it
 needs and which conflicts with our b12x 0001 in `_roce_proxy.c`; and 0144's sibling 0184 (linear draft budget).
+
+## Engram prefetch
+
+`patches/vllm/stacked/0001-engram-prefetch-next-chunk.patch`, ours. It changes code spark-ds41f 0002 adds, so it cannot
+live in `patches/vllm/` (applied first): it is in its own series directory, `stacked/`, which applies after
+`spark-ds41f/` because series directories apply in directory-name order (`tests/test_pins.py` holds it to the rules
+for our own patches and checks that order). It keeps 0002's `stage_disk_async` signature line verbatim, as a wrapper,
+because that line is 0002's marker and the pins gate requires every carried patch's marker in the installed files.
+
+With `SPARK3_ENGRAM_ASYNC=1` (0002) the reader thread reads a step's disk Engram rows beside the forward, but Engram
+layer 1 needs them almost at once, so a 4,096-token prefill step on three Sparks still waited on that read. With
+`SPARK3_ENGRAM_PREFETCH=1` as well, while one chunk of a long prompt runs, the host hashes the next chunk's tokens
+(the same n-gram hash as the GPU; `tests/test_imports_in_image.py` checks it against b12x's CPU reference) and reads
+its rows into a second staging set. The next step uses that set only if its own IDs match the prefetched ones exactly,
+and reads as usual otherwise, so a wrong guess costs time, never correctness. It acts only on a batch of one request
+that is still prefilling, the long-prompt agent case, and skips a final chunk short enough to run padded through a
+CUDA graph. `SPARK3_ENGRAM_PREFETCH_VERIFY=1` re-reads every prefetched set and compares it byte for byte before use
+(a correctness switch: it costs more than prefetch saves).
+
+Measured in the lab on the Lane A configuration (both switches on, against the same configuration without
+prefetch): cold prefill +5-7% at 10K, 40K and 100K tokens (3.40K, 3.50K, 3.54K tok/s), a 336K-token prompt 97.4 s
+instead of 104.5 s and a 515K-token one 156.2 s instead of 165.5 s, decode unchanged, long-context recall 6/6;
+every step of a long prompt used prefetched rows (1,024 steps, no wrong guess). With verify on, 577 prefetched sets
+per rank were byte-identical to a fresh read.
 
 ## MXFP4-CSF
 
@@ -203,7 +230,8 @@ source-built NCCL. NOTICE says so, and the OCI label is
 ## What the build checks
 
 - `build/pins_gate.py`: `/src/vllm`, `/src/b12x` and `/src/nccl` are checkouts at the pinned commits of the pinned
-  repos, clean or differing by exactly the carried patches, ours and then the spark-ds41f series in its listed order
+  repos, clean or differing by exactly the carried patches, ours, then the spark-ds41f series in its listed order,
+  then our `stacked/` series
   (recorded sha256, changed files equal the patches' files, reversing them restores the pin, each marker present,
   every series patch listed once); every tracked `vllm/**/*.py` and `b12x/**/*.py` is
   byte-identical in dist-packages; NCCL's installed library is the recorded source build of the pin plus its patch;

@@ -321,6 +321,36 @@ def test_spark_ds41f_0178_renderer_serves_the_v41_tokenizer_mode():
     assert cls.__name__ == "DeepseekV41Renderer", cls
 
 
+def test_engram_prefetch_host_hash_matches_the_b12x_reference():
+    # patches/vllm/stacked/0001: the prefetch hashes the next chunk's tokens on the host to pick the disk Engram rows
+    # it reads early. A step uses those rows only if their IDs equal the ones its GPU hash produced, so a wrong host
+    # hash never serves wrong rows, but it would turn every prefetch into an extra read. b12x's CPU oracle decides.
+    import random
+    import numpy as np
+    from b12x.sequence.engram.geometry import build_geometry
+    from b12x.sequence.engram.reference import hash_reference
+    from vllm.models.deepseek_v4_1.common.engram import host_engram_hashes
+
+    g = build_geometry()
+    rng = random.Random(7)
+    vocab = 129280
+    token_map = [rng.randrange(g.compressed_vocab_size) for _ in range(vocab)]
+    tm = np.asarray(token_map, dtype=np.int64)
+    for trial in range(40):
+        layer_id = g.layer_ids[trial % len(g.layer_ids)]
+        li = g.layer_ids.index(layer_id)
+        n = rng.choice([1, 2, 3, 5, 64, 777])
+        tokens = [rng.randrange(vocab) for _ in range(n)]
+        mask = [rng.random() > 0.05 for _ in range(n)]
+        known = rng.choice([0, 1, 2, 3])
+        history = [-1] * (3 - known) + [token_map[rng.randrange(vocab)] if rng.random() > 0.1 else -1
+                                        for _ in range(known)]
+        want = hash_reference(tokens, mask, [0, n], [0], [history], token_map, g, layer_id).numpy()
+        got = host_engram_hashes(np.asarray(tokens, np.int64), np.asarray(mask), np.asarray(history, np.int64), tm,
+                                 g.multipliers[li], g.primes[li], g.offsets[li], token_map[2], vocab)
+        assert got.shape == want.shape and np.array_equal(got, want), (trial, n)
+
+
 # The fork's tests/ has no __init__.py and imports its siblings as `tests.tokenizers_...`, while /src/vllm cannot go on
 # sys.path (its vllm/ would shadow the installed package). So `tests` and `tests.tokenizers_` are registered as
 # packages rooted in /src/vllm/tests, and pytest runs from / as test_fork_tp3_padding_test_passes does.

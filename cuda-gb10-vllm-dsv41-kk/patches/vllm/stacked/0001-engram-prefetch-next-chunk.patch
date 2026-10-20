@@ -1,0 +1,661 @@
+From 1d0aa440c190004fc6049d870ce769d11b45c8e7 Mon Sep 17 00:00:00 2001
+From: Christopher Maher <chris@mahercode.io>
+Date: Mon, 19 Oct 2026 14:44:13 -0700
+Subject: [PATCH] perf(deepseek-v4.1): prefetch the next prefill chunk's disk
+ Engram rows
+
+With SPARK3_ENGRAM_ASYNC=1 the reader thread reads a step's disk Engram
+rows beside the forward, but Engram layer 1 (the second of 40) needs them
+almost at once: on three DGX Sparks at TP3 a 4,096-token prefill step
+still idles about 80 ms waiting on them (profiled; it was 194 ms before
+the async path).
+
+SPARK3_ENGRAM_PREFETCH=1 (needs SPARK3_ENGRAM_ASYNC=1) reads them a step
+early. When a batch is one request that is still prefilling, the model
+runner passes its next chunk (the prompt is fully known, so the next
+chunk is the next token budget or the rest). After this step's gates are
+released, the reader thread hashes that chunk on the host (a numpy copy
+of b12x's Engram hash, checked equal to b12x's CPU oracle) and reads its
+rows into a second set of mapped staging planes. The next step binds its
+decode to that set; the reader compares every real row ID with the
+prefetched ones and skips the read only on an exact match, otherwise it
+reads the real rows into the same set as before. The rows the decode sees
+are always the rows for the real IDs; only their timing changes.
+
+The two sets alternate, each reader write waits for the decode that last
+read its set, and all kernel launches stay on the main thread. The second
+set and the host hash tables are set up on the main thread before any gate
+is queued; if that fails, prefetch turns off for the process. A failed
+prefetch read logs once and the next step reads as usual. Dummy and warmup
+steps drop any pending prefetch, and a final chunk short enough to run
+padded through a CUDA graph is not prefetched (its padded hash count would
+never match). The second set costs one more staging
+allocation per Engram table (about 25.5 MiB each at 4,096 tokens).
+Off by default. Debug switches: SPARK3_ENGRAM_PREFETCH_CORRUPT=1 flips
+one prefetched ID so every step takes the re-read path, and
+SPARK3_ENGRAM_PREFETCH_VERIFY=1 re-reads the real rows on every hit and
+compares them byte for byte with the prefetched set (a mismatch is logged
+and re-read).
+
+Signed-off-by: Christopher Maher <chris@mahercode.io>
+---
+ vllm/models/deepseek_v4_1/common/engram.py    | 240 ++++++++++++++++--
+ vllm/models/deepseek_v4_1/nvidia/model.py     | 160 +++++++++++-
+ .../deepseek_v4_1/nvidia/model_state.py       |  34 +++
+ 3 files changed, 406 insertions(+), 28 deletions(-)
+
+diff --git a/vllm/models/deepseek_v4_1/common/engram.py b/vllm/models/deepseek_v4_1/common/engram.py
+index 5ed494f901..50773b5959 100644
+--- a/vllm/models/deepseek_v4_1/common/engram.py
++++ b/vllm/models/deepseek_v4_1/common/engram.py
+@@ -84,6 +84,48 @@ ENGRAM_ASYNC_TRACE = os.environ.get("SPARK3_ENGRAM_ASYNC_TRACE") == "1"
+ # A reader that cannot see its row IDs within this long raises instead of
+ # spinning forever: the device is blocked upstream of the Engram staging.
+ ENGRAM_ASYNC_TIMEOUT_S = float(os.environ.get("SPARK3_ENGRAM_ASYNC_TIMEOUT_S", "20"))
++# SPARK3_ENGRAM_PREFETCH=1 (needs SPARK3_ENGRAM_ASYNC=1): while one prefill chunk
++# runs, the reader thread hashes the next chunk of the same prompt on the host
++# and reads its rows into a second staging set. The next step uses those rows
++# only when its real row IDs equal the prefetched ones; otherwise it reads them
++# as before. Same rows, earlier.
++ENGRAM_PREFETCH = ENGRAM_ASYNC and os.environ.get("SPARK3_ENGRAM_PREFETCH") == "1"
++# Debug only: flip one prefetched ID so every step takes the mismatch path.
++ENGRAM_PREFETCH_CORRUPT = os.environ.get("SPARK3_ENGRAM_PREFETCH_CORRUPT") == "1"
++# Debug only: on every prefetch hit, also read the real rows into a scratch
++# buffer and compare them byte for byte with the prefetched set; a mismatch is
++# logged and the set is re-read, so outputs stay correct. Costs the read the
++# prefetch saves, plus host reads of write-combined memory.
++ENGRAM_PREFETCH_VERIFY = os.environ.get("SPARK3_ENGRAM_PREFETCH_VERIFY") == "1"
++
++
++def host_engram_hashes(tokens, keep, history, token_map, multipliers, primes,
++                       offsets, pad_id, vocab_size):
++    """Host copy of b12x's Engram hash for one request's contiguous chunk.
++
++    ``tokens``/``keep`` are the chunk's raw IDs and mask, ``history`` the three
++    compressed IDs before it (-1 where absent). Mirrors
++    b12x.sequence.engram.reference.hash_reference. The geometry bounds each
++    multiplier so token * multiplier stays below 2**63, so int64 is exact. A
++    result that differs from the device kernel only costs a prefetch miss: the
++    caller compares against the device IDs before using any row.
++    """
++    import numpy as np
++
++    n = tokens.shape[0]
++    valid = keep & (tokens >= 0) & (tokens < vocab_size)
++    compressed = np.where(valid, token_map[np.where(valid, tokens, 0)], -1)
++    cache = np.concatenate((history.astype(np.int64), compressed.astype(np.int64)))
++    out = np.empty((n, 24), dtype=np.int64)
++    rolling = np.zeros(n, dtype=np.int64)
++    blocked = np.zeros(n, dtype=bool)
++    for lag in range(4):
++        source = cache[3 - lag : 3 - lag + n]
++        blocked |= source == -1
++        rolling ^= np.where(blocked, pad_id, source) * int(multipliers[lag])
++        for head in range((lag - 1) * 8, lag * 8) if lag else ():
++            out[:, head] = rolling % int(primes[head]) + int(offsets[head])
++    return out
+ 
+ 
+ def wait_for_event(event, what: str) -> None:
+@@ -167,6 +209,50 @@ class HostGate:
+         self.host.value = sequence
+ 
+ 
++class _StagedRows:
++    """One set of mapped staging planes: the reader fills it, the decode reads it.
++
++    ``done`` is recorded after the decode that last read the set, so a reader
++    never overwrites rows a queued decode still needs.
++    """
++
++    def __init__(self, weight, scale, weight_buffer, scale_buffer, done, *,
++                 used=False, ids=None, owners=()):
++        self.weight, self.scale = weight, scale
++        self.weight_buffer, self.scale_buffer = weight_buffer, scale_buffer
++        self.done, self.used = done, used
++        self.ids = ids
++        self.ids_buffer = None if ids is None else memoryview(ids)
++        self._owners = owners  # keeps the mapped allocations alive
++
++    @classmethod
++    def allocate(cls, cache, like):
++        """A second set shaped like the cache's own (about 25.5 MiB at 4K tokens)."""
++        import numpy as np
++
++        weight = MappedHostAllocation(
++            (cache.max_lookups, cache.weight_row_bytes), torch.uint8, cache.device
++        )
++        owners = [weight]
++        scale, scale_buffer = like.scale, None
++        if cache.scale_row_bytes:
++            scale_alloc = MappedHostAllocation(
++                (cache.max_lookups, cache.scale_row_bytes), torch.uint8, cache.device
++            )
++            owners.append(scale_alloc)
++            scale = scale_alloc.device_view
++            scale_buffer = memoryview(scale_alloc.host_view.numpy())
++        return cls(
++            weight.device_view.view(like.weight.dtype),
++            scale,
++            memoryview(weight.host_view.numpy()),
++            scale_buffer,
++            torch.cuda.Event(),
++            ids=np.empty((cache.max_lookups,), dtype=np.int64),
++            owners=tuple(owners),
++        )
++
++
+ _ROWS_READY_FLAGS: dict[int, RowsReadyFlag] = {}
+ 
+ 
+@@ -752,6 +838,12 @@ class ParallelEngramEmbedding(nn.Module):
+ 
+     def stage_disk_async(self, indices, out, num_tokens, flag, side_stream):
+         """Main thread: stage the IDs and queue the gated decode; no disk I/O."""
++        return self.stage_disk_rows(indices, out, num_tokens, flag, side_stream)
++
++    def stage_disk_rows(self, indices, out, num_tokens, flag, side_stream,
++                        row_set=0, expected_ids=None):
++        """stage_disk_async into one of the staged row sets; ``expected_ids``
++        are the IDs a prefetch already read into that set."""
+         from b12x.sequence.engram._kernels import lookup_op
+ 
+         if self.table_memory != "disk":
+@@ -784,10 +876,13 @@ class ParallelEngramEmbedding(nn.Module):
+             self._disk_prepared_rows = 0
+         if indices.shape[0] < self._disk_prepared_rows:
+             out[indices.shape[0] : self._disk_prepared_rows].zero_()
+-        # The previous decode must be done with the mapped rows before the
++        # Set 0 is the cache's own staging planes; set 1 exists only with
++        # SPARK3_ENGRAM_PREFETCH and holds rows read a step early.
++        rows = self.staged_row_set(row_set)
++        # The previous decode must be done with these mapped rows before the
+         # reader overwrites them; the ID copy below is ordered after it.
+-        if cache._cache_used:
+-            stream.wait_event(cache._cache_done)
++        if rows.used:
++            stream.wait_event(rows.done)
+         count = indices.shape[0] * 24
+         cache.ids_host[:count].copy_(self.hashes.view(-1)[:count], non_blocking=True)
+         cache._ids_ready.record(stream)
+@@ -800,46 +895,142 @@ class ParallelEngramEmbedding(nn.Module):
+         with torch.cuda.stream(side_stream):
+             lookup_op(
+                 binding.plan.handle,
+-                binding.weight,
+-                binding.scale_bytes,
++                rows.weight,
++                rows.scale,
+                 binding.hash_ids,
+                 binding.num_tokens,
+                 binding.out,
+                 indices.shape[0],
+                 False,
+             )
+-            cache._cache_done.record(side_stream)
++            rows.done.record(side_stream)
++            rows.used = True
+             cache._cache_used = True
+             flag.write(side_stream, 1)
+         self._disk_prepared_rows = indices.shape[0]
+         if ENGRAM_ASYNC_TRACE:
+             logger.info(
+-                "engram-async stage table=%x tokens=%d lookups=%d sequence=%d",
+-                id(self), indices.shape[0], count, sequence,
++                "engram-async stage table=%x tokens=%d lookups=%d sequence=%d set=%d",
++                id(self), indices.shape[0], count, sequence, row_set,
+             )
+-        return indices.shape[0], count, sequence
++        return indices.shape[0], count, sequence, row_set, expected_ids
++
++    def staged_row_set(self, index):
++        """Staging planes the reader fills and the decode reads: 0 or 1."""
++        sets = getattr(self, "_row_sets", None)
++        if sets is None:
++            import numpy as np
++
++            cache = self.disk_table._cache
++            binding = self._disk_binding
++            # Prefetch reads take their IDs from the set's own buffer, not
++            # ids_host, which carries the current step's IDs.
++            sets = [_StagedRows(binding.weight, binding.scale_bytes,
++                                cache._weight_buffer, cache._scale_buffer,
++                                cache._cache_done, used=cache._cache_used,
++                                ids=np.empty((cache.max_lookups,), dtype=np.int64))]
++            self._row_sets = sets
++        if index == 1 and len(sets) == 1:
++            sets.append(_StagedRows.allocate(self.disk_table._cache, sets[0]))
++        return sets[index]
+ 
+     def read_disk_async(self, job):
+-        """Reader thread, host work only: wait for the IDs, read the rows."""
+-        tokens, count, sequence = job
++        """Reader thread, host work only: wait for the IDs, read the rows.
++
++        With prefetched rows (``expected`` set) the read is skipped when the
++        real IDs equal the prefetched ones; any difference reads them as usual
++        into the same planes, so the decode always sees the real rows.
++        """
++        import numpy as np
++
++        tokens, count, sequence, row_set, expected = job
+         cache = self.disk_table._cache
++        rows = self.staged_row_set(row_set)
++        hit = False
+         try:
+             wait_for_event(cache._ids_ready, f"row IDs for table {id(self):x} ({tokens} tokens)")
+             if ENGRAM_ASYNC_DELAY:
+                 time.sleep(ENGRAM_ASYNC_DELAY)
+-            cache._native.ple_reader_run(
+-                cache._reader,
+-                cache._ids_buffer,
+-                cache._weight_buffer,
+-                cache._scale_buffer,
+-                count,
++            hit = (
++                expected is not None
++                and expected.shape[0] == count
++                and np.array_equal(cache.ids_host.numpy()[:count], expected)
+             )
++            if hit and ENGRAM_PREFETCH_VERIFY and not self._verify_prefetched(rows, count):
++                hit = False
++            if not hit:
++                cache._native.ple_reader_run(
++                    cache._reader,
++                    cache._ids_buffer,
++                    rows.weight_buffer,
++                    rows.scale_buffer,
++                    count,
++                )
+         finally:
+             # Release even on failure so no stream waits forever; the caller
+             # re-raises the failure before the next step.
+             self._read_gate.release(sequence)
+         if ENGRAM_ASYNC_TRACE:
+-            logger.info("engram-async rows read table=%x sequence=%d", id(self), sequence)
++            logger.info(
++                "engram-async rows read table=%x sequence=%d set=%d prefetched=%s hit=%s",
++                id(self), sequence, row_set, expected is not None, hit,
++            )
++        return hit
++
++    def _verify_prefetched(self, rows, count):
++        """SPARK3_ENGRAM_PREFETCH_VERIFY: re-read the real rows into scratch
++        and compare with the prefetched set. Returns True when equal."""
++        import numpy as np
++
++        cache = self.disk_table._cache
++        scratch = getattr(self, "_verify_scratch", None)
++        if scratch is None:
++            weight = np.empty((cache.max_lookups, cache.weight_row_bytes), np.uint8)
++            scale = (np.empty((cache.max_lookups, cache.scale_row_bytes), np.uint8)
++                     if rows.scale_buffer is not None else None)
++            scratch = self._verify_scratch = (weight, scale)
++        weight, scale = scratch
++        cache._native.ple_reader_run(
++            cache._reader,
++            cache._ids_buffer,
++            memoryview(weight),
++            None if scale is None else memoryview(scale),
++            count,
++        )
++        equal = np.array_equal(np.asarray(rows.weight_buffer)[:count], weight[:count])
++        if scale is not None:
++            equal = equal and np.array_equal(
++                np.asarray(rows.scale_buffer)[:count], scale[:count]
++            )
++        stats = getattr(self, "_verify_stats", None) or [0, 0]
++        stats[0 if equal else 1] += 1
++        self._verify_stats = stats
++        if not equal or sum(stats) % 64 == 1:
++            log = logger.warning if not equal else logger.info
++            log(
++                "Engram prefetch verify table=%x: %d hits byte-identical, %d differed",
++                id(self), stats[0], stats[1],
++            )
++        return equal
++
++    def prefetch_rows(self, row_set, ids):
++        """Reader thread: read the rows for ``ids`` (host int64) into a set.
++
++        Waits until the decode that last read this set has finished, the same
++        ordering stage_disk_async gives the current step's read.
++        """
++        rows = self.staged_row_set(row_set)
++        if rows.used:
++            wait_for_event(rows.done, f"decode of staged set {row_set} for table {id(self):x}")
++        count = ids.shape[0]
++        rows.ids[:count] = ids
++        self.disk_table._cache._native.ple_reader_run(
++            self.disk_table._cache._reader,
++            rows.ids_buffer,
++            rows.weight_buffer,
++            rows.scale_buffer,
++            count,
++        )
+ 
+ 
+     def lookup_native(self, indices, out):
+@@ -1101,17 +1292,22 @@ class Engram(nn.Module):
+     def async_rows(self) -> bool:
+         return getattr(self, "_async_rows", False)
+ 
+-    def stage_disk_async(self, hash_ids, num_tokens, side_stream):
++    def stage_disk_async(self, hash_ids, num_tokens, side_stream, row_set=0,
++                         expected_ids=None):
+         self.invalidate_disk_output()
+-        job = self.embed_tokens.stage_disk_async(
+-            hash_ids, self.staged_rows, num_tokens, self._rows_flag, side_stream
++        job = self.embed_tokens.stage_disk_rows(
++            hash_ids, self.staged_rows, num_tokens, self._rows_flag, side_stream,
++            row_set, expected_ids,
+         )
+         self._disk_prepared_tokens = hash_ids.shape[0]
+         self._disk_prepared = True
+         return job
+ 
+     def read_disk_async(self, job):
+-        self.embed_tokens.read_disk_async(job)
++        return self.embed_tokens.read_disk_async(job)
++
++    def prefetch_rows(self, row_set, ids):
++        self.embed_tokens.prefetch_rows(row_set, ids)
+ 
+     def prepare_embeddings(self, hash_ids):
+         self.embed_tokens.lookup(hash_ids, self.staged_rows)
+diff --git a/vllm/models/deepseek_v4_1/nvidia/model.py b/vllm/models/deepseek_v4_1/nvidia/model.py
+index a89d61b62d..02fc1230ed 100644
+--- a/vllm/models/deepseek_v4_1/nvidia/model.py
++++ b/vllm/models/deepseek_v4_1/nvidia/model.py
+@@ -5,9 +5,11 @@ import typing
+ from collections.abc import Callable, Iterable
+ from itertools import islice
+ 
++import numpy as np
+ import regex as re
+ import torch
+ import torch.nn as nn
++from b12x.preparation import require_prepared
+ from b12x.sequence import engram as engram_native
+ 
+ import vllm.envs as envs
+@@ -44,7 +46,10 @@ from vllm.models.common.ops.sequence_parallel import (
+     sp_shard,
+ )
+ from vllm.models.deepseek_v4.nvidia.model import DeepseekV4MoE
+-from vllm.models.deepseek_v41.common.mm_preprocess import image_sentinel_mask
++from vllm.models.deepseek_v41.common.mm_preprocess import (
++    IMAGE_SENTINEL_BASE_ID,
++    image_sentinel_mask,
++)
+ from vllm.models.deepseek_v41.nvidia.model import (
+     DeepseekV4MixtureOfExperts as DeepseekV4MixtureOfExperts,
+ )
+@@ -67,7 +72,14 @@ from .. import l2_prefetch, sp_prefill
+ from ..b12x_layers import B12xLinearMethod, B12xMHC
+ from ..b12x_layers import B12xRMSNorm as RMSNorm
+ from ..ced import ced_decoder_start, gather_rows, scatter_rows
+-from ..common.engram import Engram, EngramLayout, NgramHashState
++from ..common.engram import (
++    ENGRAM_PREFETCH,
++    ENGRAM_PREFETCH_CORRUPT,
++    Engram,
++    EngramLayout,
++    NgramHashState,
++    host_engram_hashes,
++)
+ from .b12x_attention import DeepseekV41B12xAttention
+ 
+ if typing.TYPE_CHECKING:
+@@ -503,6 +515,13 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
+         self.prefill_sp_skips_mtp_buffer = (
+             spec_config is not None and spec_config.use_dspark()
+         )
++        # SPARK3_ENGRAM_PREFETCH: the next chunk the runner predicted, the rows
++        # read for it last step, and [steps that used them, steps that re-read].
++        self._engram_next = None
++        self._engram_pending = None
++        self._engram_prefetch_stats = [0, 0]
++        self._engram_prefetch_warned = False
++        self._engram_prefetch_off = False
+ 
+     def _engram_reader(self):
+         """One reader thread and side stream for asynchronous disk Engram rows."""
+@@ -519,16 +538,129 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
+             )
+         return self._engram_executor
+ 
+-    def _read_engram_rows(self, jobs):
+-        """Reader thread: host work only (no kernel launches, no CUDA waits)."""
++    def _read_engram_rows(self, jobs, prefetch=None):
++        """Reader thread: host work only (no kernel launches, no CUDA waits).
++
++        The next chunk's prefetch runs only after every gate of this step is
++        released, so nothing the device waits on depends on it.
++        """
+         failure = None
++        hits = 0
+         for engram, job in jobs:
+             try:
+-                engram.read_disk_async(job)
++                hits += bool(engram.read_disk_async(job))
+             except BaseException as error:  # every gate is released regardless
+                 failure = failure or error
+         if failure is not None:
+             raise failure
++        if any(job[4] is not None for _, job in jobs):
++            stats = self._engram_prefetch_stats
++            stats[0 if hits == len(jobs) else 1] += 1
++            if sum(stats) % 64 == 0:
++                logger.info(
++                    "Engram prefetch: %d steps used prefetched rows, %d re-read",
++                    stats[0], stats[1],
++                )
++        if prefetch is not None:
++            try:
++                self._prefetch_engram_rows(prefetch)
++            except Exception:
++                # A failed prefetch only loses the head start: the next step
++                # reads its rows as usual.
++                self._engram_pending = None
++                if not self._engram_prefetch_warned:
++                    self._engram_prefetch_warned = True
++                    logger.warning(
++                        "Engram prefetch failed; the next step reads its rows as usual",
++                        exc_info=True,
++                    )
++
++    def set_engram_prefetch(self, source):
++        """Model runner: the next chunk of the single prefilling request.
++
++        ``source`` is (host token row, start, count): the request's token IDs
++        (a host view that already holds the whole prompt), where the next chunk
++        starts and its length. The reader thread slices it after this step's
++        row IDs are ready, so the runner's write of a new prompt has landed.
++        """
++        self._engram_next = source if ENGRAM_PREFETCH else None
++
++    def _engram_prefetch_setup(self, engrams, next_chunk, row_set):
++        """Main thread, before any gate is queued: the other staging set and
++        the host hash tables. A failure here turns prefetch off for good
++        instead of failing the step."""
++        if self._engram_prefetch_off:
++            return None
++        # Set 0 wraps the cache's own planes and is built from the lookup
++        # binding, which the first staged step creates.
++        if any(engram.embed_tokens._disk_binding is None for engram in engrams):
++            return None
++        try:
++            for engram in engrams:
++                engram.embed_tokens.staged_row_set(0)
++                engram.embed_tokens.staged_row_set(row_set)
++            geometry = self._engram_host_geometry()
++        except Exception:
++            self._engram_prefetch_off = True
++            logger.warning(
++                "Engram prefetch setup failed; prefetch is off for this process",
++                exc_info=True,
++            )
++            return None
++        return {
++            "source": next_chunk,
++            "row_set": row_set,
++            "engrams": engrams,
++            "geometry": geometry,
++        }
++
++    def _engram_host_geometry(self):
++        """Main thread, once: host copies of each hash plan's tables."""
++        geometry = getattr(self, "_engram_geometry", None)
++        if geometry is None:
++            geometry = []
++            for plan in self.engram_hash.layout.hash_plans:
++                state = require_prepared(plan, "sequence.engram")
++                g = state.geometry
++                index = g.layer_ids.index(state.caps.layer_id)
++                geometry.append((
++                    state.token_map.cpu().numpy().astype(np.int64),
++                    g.multipliers[index], g.primes[index], g.offsets[index],
++                    int(state.pad_id), int(state.caps.vocab_size),
++                ))
++            self._engram_geometry = geometry
++        return geometry
++
++    def _prefetch_engram_rows(self, prefetch):
++        """Reader thread: hash the next chunk on the host and read its rows."""
++        row, start, count = prefetch["source"]
++        tokens = np.asarray(row[start : start + count], dtype=np.int64)
++        if tokens.shape[0] != count:
++            return
++        raw = np.asarray(row[max(0, start - 3) : start], dtype=np.int64)
++        keep = tokens != IMAGE_SENTINEL_BASE_ID
++        expected = {}
++        for engram in prefetch["engrams"]:
++            token_map, mult, primes, offsets, pad, vocab = prefetch["geometry"][
++                engram.layer_hash_index
++            ]
++            # The runner's lookback rule (_prepare_metadata): out-of-vocab and
++            # image IDs carry no history.
++            history = np.full(3, -1, dtype=np.int64)
++            valid = (raw >= 0) & (raw < vocab) & (raw != IMAGE_SENTINEL_BASE_ID)
++            history[3 - raw.shape[0] :] = np.where(
++                valid, token_map[np.where(valid, raw, 0)], -1
++            )
++            ids = host_engram_hashes(
++                tokens, keep, history, token_map, mult, primes, offsets, pad, vocab
++            ).reshape(-1)
++            if ENGRAM_PREFETCH_CORRUPT:
++                ids[0] ^= 1
++            engram.prefetch_rows(prefetch["row_set"], ids)
++            expected[id(engram)] = ids
++        self._engram_pending = {
++            "tokens": count, "row_set": prefetch["row_set"], "ids": expected,
++        }
+ 
+     def join_engram_reader(self):
+         future = getattr(self, "_engram_reader_future", None)
+@@ -563,6 +695,18 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
+             )
+             if engrams and all(engram.async_rows for engram in engrams):
+                 self._engram_reader()
++                # Rows prefetched last step are used only by a step of exactly
++                # the predicted size; the reader still compares every ID.
++                pending, self._engram_pending = self._engram_pending, None
++                next_chunk, self._engram_next = self._engram_next, None
++                if pending is not None and pending["tokens"] != input_ids.shape[0]:
++                    pending = None
++                row_set = 0 if pending is None else pending["row_set"]
++                prefetch = None
++                if next_chunk is not None:
++                    prefetch = self._engram_prefetch_setup(
++                        engrams, next_chunk, 1 - row_set
++                    )
+                 jobs = [
+                     (
+                         engram,
+@@ -570,12 +714,14 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
+                             hashes[:, engram.layer_hash_index],
+                             self.engram_hash.num_tokens,
+                             self._engram_rows_stream,
++                            row_set,
++                            None if pending is None else pending["ids"][id(engram)],
+                         ),
+                     )
+                     for engram in engrams
+                 ]
+                 self._engram_reader_future = self._engram_reader().submit(
+-                    self._read_engram_rows, jobs
++                    self._read_engram_rows, jobs, prefetch
+                 )
+                 return
+             # One batch lets the per-layer disk reads overlap on the host.
+@@ -605,6 +751,8 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
+                 "Disk Engram preparation must run outside compile/capture"
+             )
+         self.join_engram_reader()
++        # Dummy and warmup steps start no prefetch and end any pending one.
++        self._engram_pending = self._engram_next = None
+         self.prepared_engram_hashes.fill_(-1)
+         for layer in islice(self.layers, self.start_layer, self.end_layer):
+             if getattr(layer, "engram", None) is not None:
+diff --git a/vllm/models/deepseek_v4_1/nvidia/model_state.py b/vllm/models/deepseek_v4_1/nvidia/model_state.py
+index 1104975229..c571eb1d0c 100644
+--- a/vllm/models/deepseek_v4_1/nvidia/model_state.py
++++ b/vllm/models/deepseek_v4_1/nvidia/model_state.py
+@@ -77,6 +77,11 @@ class DeepseekV41ModelState(DefaultModelState):
+         self._ced_prefix_start: dict[str, int] = {}
+         self._ced_batch: InputBatch | None = None
+         self.max_cudagraph_query_len: int | None = None
++        # Engram prefetch skips a next chunk short enough to be graph-dispatched:
++        # its padded token count would never match the prediction.
++        self._max_graph_tokens = max(
++            vllm_config.compilation_config.cudagraph_capture_sizes or (0,)
++        )
+         if ced_decoder_start(self.model_config.hf_config) is not None:
+             compact_max = min(self.max_num_tokens, self.max_num_reqs * CED_WINDOW)
+             # Compaction changes the model's optional-input branch; FULL graphs
+@@ -255,12 +260,41 @@ class DeepseekV41ModelState(DefaultModelState):
+             BLOCK_DEPTH=triton.next_power_of_2(depth),
+         )
+         model_inputs["lookback_token_ids"] = window
++        next_chunk = self._next_prefill_chunk(input_batch, req_states)
+         for model in self.disk_engram_models:
++            model.set_engram_prefetch(next_chunk)
+             model.prepare_disk_engram(
+                 input_batch.input_ids, input_batch.query_start_loc, window
+             )
+         return model_inputs
+ 
++    def _next_prefill_chunk(self, input_batch: InputBatch, req_states: RequestState):
++        """(token row, start, count) of the next chunk, for Engram prefetch.
++
++        Only a batch of one request that is still prefilling, the long-prompt
++        agent case. The guess assumes the scheduler gives that request the
++        next full token budget; the Engram reader compares every row ID before
++        using a prefetched row, so a wrong guess costs only the head start.
++        """
++        if input_batch.num_reqs != 1 or not input_batch.is_prefilling_np[0]:
++            return None
++        uva = getattr(req_states.all_token_ids, "_uva_buf", None)
++        if uva is None:
++            return None
++        start = int(input_batch.num_computed_prefill_tokens_np[0]) + int(
++            input_batch.num_scheduled_tokens[0]
++        )
++        count = min(
++            req_states.max_num_batched_tokens,
++            int(input_batch.prefill_len_np[0]) - start,
++        )
++        # A short final chunk runs padded through a CUDA graph (up to the CED
++        # window, or the largest capture size), so its hash count is the padded
++        # one and a prefetch would only cost a wasted read.
++        if count <= (self.max_cudagraph_query_len or self._max_graph_tokens):
++            return None
++        return uva.np[int(input_batch.idx_mapping_np[0])], start, count
++
+     def prepare_dummy_inputs(self, num_reqs: int, num_tokens: int) -> dict[str, Any]:
+         model_inputs = super().prepare_dummy_inputs(num_reqs, num_tokens)
+         if self.ced_state is not None:
+-- 
+2.54.0 (Apple Git-157)
+
