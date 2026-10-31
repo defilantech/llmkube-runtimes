@@ -51,7 +51,7 @@
 # immutable commit SHA. This is the open upstream PR ggml-org/llama.cpp#27742.
 #
 # Why a fork rather than upstream: Qwen3.8-Flash-Next is arch `qwen4exp`, and
-# upstream has no such architecture. Our production pin (b10355 in
+# upstream has no such architecture. Our production pin (b11146 in
 # cuda-gb10/Dockerfile) will load the GGUF's header and then reject it as an
 # unknown architecture. There is no flag or fallback that makes stock llama.cpp
 # serve this model, so a variant image is the only way to run it at all.

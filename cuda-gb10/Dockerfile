@@ -51,8 +51,8 @@
 # Deliberately the SAME pin as vulkan/Dockerfile so GB10 and Strix Halo numbers
 # compare like vs like; rocm/Dockerfile carries the same rule for the same
 # reason. Bump both together.
-ARG LLAMACPP_REF=b10355
-ARG LLAMACPP_SHA=dd1ea524333b1e697489067d7a4c39c60d32beee
+ARG LLAMACPP_REF=b11146
+ARG LLAMACPP_SHA=7fe450e19305b828c199d602c23a8337aaa1f03b
 
 # GB10 is sm_121. "121a-real" = architecture-specific device code, no PTX.
 # Deliberately no virtual/PTX target: a PTX fallback would let this image load

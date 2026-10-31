@@ -17,8 +17,8 @@
 # upstream (2026-07-22), so this image can serve Laguna-family GGUFs. The build
 # asserts the laguna arch actually compiled in (below); the on-hardware Laguna
 # smoke on gfx1151 is the real proof that its op sequence runs on Vulkan.
-ARG LLAMACPP_REF=b10355
-ARG LLAMACPP_SHA=dd1ea524333b1e697489067d7a4c39c60d32beee
+ARG LLAMACPP_REF=b11146
+ARG LLAMACPP_SHA=7fe450e19305b828c199d602c23a8337aaa1f03b
 # ubuntu:26.04 pinned by digest. 26.04's Mesa is new enough for gfx1151 (Strix
 # Halo) RADV; Debian stable / older Ubuntu ship Mesa too old to enumerate it.
 ARG BASE_DIGEST=sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
