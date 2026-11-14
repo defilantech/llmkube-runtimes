@@ -35,7 +35,7 @@ ARG LLMKUBE_REF=v0.8.27
 # Toolchain version pins. Keep in lockstep with the LLMKube Makefile
 # (HELM_VERSION, GOLANGCI_LINT_VERSION, CONTROLLER_TOOLS_VERSION) so the
 # in-cluster fast gate runs the same tool versions CI does.
-ARG GO_VERSION=1.27.3
+ARG GO_VERSION=1.27.4
 ARG HELM_VERSION=v3.22.1
 ARG GOLANGCI_LINT_VERSION=v2.15.0
 ARG CONTROLLER_TOOLS_VERSION=v0.23.0
